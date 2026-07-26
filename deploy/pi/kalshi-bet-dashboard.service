@@ -1,0 +1,21 @@
+[Unit]
+Description=Kalshi BTC Prediction Dashboard
+After=network-online.target kalshi-bet.service
+Wants=kalshi-bet.service
+
+[Service]
+Type=simple
+User=@RUN_USER@
+Group=@RUN_GROUP@
+WorkingDirectory=@INSTALL_DIR@/dashboard
+Environment=NODE_ENV=production
+EnvironmentFile=-@INSTALL_DIR@/dashboard/.env.local
+ExecStart=@NPM_BIN@ run start
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kalshi-bet-dashboard
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,23 @@
+[Unit]
+Description=Kalshi BTC 15-Minute Prediction Engine
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User=@RUN_USER@
+Group=@RUN_GROUP@
+WorkingDirectory=@INSTALL_DIR@
+Environment=NODE_ENV=production
+EnvironmentFile=-@INSTALL_DIR@/.env
+ExecStartPre=/usr/bin/docker compose -f @INSTALL_DIR@/docker-compose.yml up -d
+ExecStart=@NODE_BIN@ @INSTALL_DIR@/dist/src/index.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=kalshi-bet
+
+[Install]
+WantedBy=multi-user.target

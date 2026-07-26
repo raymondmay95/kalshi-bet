@@ -1,0 +1,88 @@
+# Raspberry Pi deployment
+
+Run the full stack (engine + Postgres + dashboard) on a Raspberry Pi 4/5 with 64-bit Raspberry Pi OS.
+
+## Requirements
+
+- Raspberry Pi 4 (4GB+) or Pi 5
+- 64-bit Raspberry Pi OS (Bookworm)
+- Internet access (Kalshi API; Binance may be geo-restricted)
+- Docker (installed by setup script)
+- Node.js 20+ (installed by setup script)
+
+## First-time setup
+
+```bash
+git clone https://github.com/raymondmay95/kalshi-bet.git
+cd kalshi-bet
+bash deploy/pi/setup.sh
+```
+
+If your Pi user is not detected correctly, set `RUN_USER` when installing services:
+
+```bash
+sudo RUN_USER=youruser INSTALL_DIR="$PWD" bash deploy/pi/install-services.sh
+```
+
+## Start services
+
+```bash
+sudo systemctl enable kalshi-bet kalshi-bet-dashboard
+sudo systemctl start kalshi-bet kalshi-bet-dashboard
+```
+
+## URLs
+
+| Service | URL |
+|---------|-----|
+| Engine API | `http://<pi-ip>:3001` |
+| Dashboard | `http://<pi-ip>:3000` |
+
+## Logs
+
+```bash
+journalctl -u kalshi-bet -f
+journalctl -u kalshi-bet-dashboard -f
+```
+
+## Update after git pull
+
+```bash
+bash deploy/pi/update.sh
+```
+
+## Daily report
+
+```bash
+npm run report:daily
+```
+
+Add a cron job for automated reports:
+
+```bash
+crontab -e
+# 0 0 * * * cd /home/pi/kalshi-bet && npm run report:daily >> /home/pi/kalshi-bet/report.log 2>&1
+```
+
+## Troubleshooting
+
+**Binance blocked**
+
+```bash
+curl -s "https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT"
+```
+
+If this returns a geo-restriction error, the engine cannot stream Binance data from your network.
+
+**Postgres not ready**
+
+```bash
+docker compose ps
+docker compose logs postgres
+```
+
+**Check engine health**
+
+```bash
+curl -s http://localhost:3001/health
+```

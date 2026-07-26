@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.env
+.env.local
+*.log
+.DS_Store
+dashboard/.next/
+dashboard/node_modules/
+dashboard/.env.local
+.cursor/
