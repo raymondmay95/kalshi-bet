@@ -135,8 +135,38 @@ export default function DashboardPage() {
         : "LOW"
     : null;
   const signal = rec?.recommendation ?? null;
+  const hasActiveBet = signal === "HIGH" || signal === "LOW";
   const signalColor =
     signal === "HIGH" ? "#22c55e" : signal === "LOW" ? "#ef4444" : "#94a3b8";
+
+  useEffect(() => {
+    document.body.dataset.theme = hasActiveBet ? "active-bet" : "no-bet";
+    document.body.dataset.signal = hasActiveBet ? signal.toLowerCase() : "none";
+
+    return () => {
+      delete document.body.dataset.theme;
+      delete document.body.dataset.signal;
+    };
+  }, [hasActiveBet, signal]);
+
+  useEffect(() => {
+    const activeBackground = "#17122a";
+    const inactiveBackground = "#121826";
+
+    chartApi.current?.applyOptions({
+      layout: {
+        background: { color: hasActiveBet ? activeBackground : inactiveBackground },
+        textColor: hasActiveBet ? "#e9e5ff" : "#d1d5db",
+      },
+      grid: {
+        vertLines: { color: hasActiveBet ? "#30284d" : "#1f2937" },
+        horzLines: { color: hasActiveBet ? "#30284d" : "#1f2937" },
+      },
+    });
+    priceSeries.current?.applyOptions({ color: hasActiveBet ? signalColor : "#22c55e" });
+    strikeSeries.current?.applyOptions({ color: hasActiveBet ? "#a78bfa" : "#f59e0b" });
+  }, [hasActiveBet, signalColor]);
+
   const filteredHistory = history.filter((row) => {
     if (signalFilter === "ALL") return true;
     if (signalFilter === "ACTIONABLE") {

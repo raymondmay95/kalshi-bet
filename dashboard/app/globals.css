@@ -2,9 +2,50 @@
   box-sizing: border-box;
 }
 
+body {
+  --page-background: #0b1020;
+  --page-foreground: #e8ecf1;
+  --card-background: #121826;
+  --card-border: #1f2937;
+  --heading-color: #cbd5e1;
+  --muted-color: #94a3b8;
+  --control-background: #0b1220;
+  --control-border: #334155;
+  --accent: #94a3b8;
+  margin: 0;
+  min-height: 100vh;
+  color: var(--page-foreground);
+  background: var(--page-background);
+  font-family: system-ui, sans-serif;
+  transition: background 400ms ease, color 250ms ease;
+}
+
+body[data-theme="active-bet"] {
+  --page-background: #0e0a1a;
+  --page-foreground: #f5f3ff;
+  --card-background: #17122a;
+  --card-border: #4c3d72;
+  --heading-color: #e9e5ff;
+  --muted-color: #b8add8;
+  --control-background: #100c20;
+  --control-border: #66558f;
+  background:
+    radial-gradient(circle at 50% -10%, color-mix(in srgb, var(--accent) 24%, transparent), transparent 42%),
+    #0e0a1a;
+}
+
+body[data-theme="active-bet"][data-signal="high"] {
+  --accent: #22c55e;
+}
+
+body[data-theme="active-bet"][data-signal="low"] {
+  --accent: #ef4444;
+}
+
 .dashboard-main {
   padding: 24px;
   max-width: 1200px;
+  min-height: 100vh;
   margin: 0 auto;
 }
 
@@ -14,7 +55,7 @@
 }
 
 .dashboard-subtitle {
-  color: #94a3b8;
+  color: var(--muted-color);
   font-size: 0.9rem;
 }
 
@@ -32,16 +73,21 @@
 }
 
 .card {
-  background: #121826;
-  border: 1px solid #1f2937;
+  background: var(--card-background);
+  border: 1px solid var(--card-border);
   border-radius: 12px;
   padding: 16px;
+  transition: background 400ms ease, border-color 400ms ease, box-shadow 400ms ease;
+}
+
+body[data-theme="active-bet"] .card {
+  box-shadow: 0 12px 36px color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
 .card-heading {
   margin-top: 0;
   font-size: 16px;
-  color: #cbd5e1;
+  color: var(--heading-color);
 }
 
 .card-heading-row {
@@ -93,7 +139,7 @@
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  color: #94a3b8;
+  color: var(--muted-color);
   font-size: 12px;
 }
 
@@ -103,16 +149,16 @@
 }
 
 .history-filter select {
-  background: #0b1220;
-  color: #e2e8f0;
-  border: 1px solid #334155;
+  background: var(--control-background);
+  color: var(--page-foreground);
+  border: 1px solid var(--control-border);
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 13px;
 }
 
 .history-empty {
-  color: #94a3b8;
+  color: var(--muted-color);
   text-align: center;
   padding: 20px 4px !important;
 }
@@ -131,7 +177,7 @@
 
 .history-table th {
   text-align: left;
-  color: #94a3b8;
+  color: var(--muted-color);
   padding: 8px 4px;
   white-space: nowrap;
 }
@@ -142,7 +188,7 @@
 }
 
 .history-table tbody tr {
-  border-top: 1px solid #1f2937;
+  border-top: 1px solid var(--card-border);
 }
 
 .signal-value {
@@ -160,12 +206,12 @@
 }
 
 .metric-label {
-  color: #94a3b8;
+  color: var(--muted-color);
 }
 
 .reasons-list {
   padding-left: 18px;
-  color: #cbd5e1;
+  color: var(--heading-color);
   margin: 8px 0;
 }
 
