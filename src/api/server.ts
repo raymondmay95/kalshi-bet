@@ -36,8 +36,6 @@ export function getLiveState(): LiveState {
 }
 
 export function startApiServer(): void {
-  const port = getEnv().API_PORT;
-
   const server = createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Content-Type", "application/json");
@@ -111,7 +109,10 @@ export function startApiServer(): void {
     }
   });
 
-  server.listen(port, () => {
-    logger.info({ port }, "API server listening");
+  server.listen(getEnv().API_PORT, getEnv().API_HOST, () => {
+    logger.info(
+      { port: getEnv().API_PORT, host: getEnv().API_HOST },
+      "API server listening",
+    );
   });
 }

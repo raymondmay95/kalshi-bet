@@ -27,6 +27,7 @@ const envSchema = z.object({
   SLIPPAGE_CENTS: z.coerce.number().default(0.01),
   TAKER_FEE_COEFFICIENT: z.coerce.number().default(0.07),
   API_PORT: z.coerce.number().default(3001),
+  API_HOST: z.string().default("0.0.0.0"),
 });
 
 export type Env = z.infer<typeof envSchema>;
