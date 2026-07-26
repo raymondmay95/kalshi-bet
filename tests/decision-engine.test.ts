@@ -19,18 +19,18 @@ const baseInput = {
 };
 
 describe("decision engine", () => {
-  it("returns NO_BET for stale data", () => {
+  it("returns NO_BET for stale data when alwaysPickSide is false", () => {
     const decision = makeDecision(
       { ...baseInput, dataIsStale: true },
-      testConfig(),
+      { ...testConfig(), alwaysPickSide: false },
     );
     expect(decision.recommendation).toBe("NO_BET");
   });
 
-  it("returns NO_BET when seconds remaining below minimum", () => {
+  it("returns NO_BET when seconds remaining below minimum and alwaysPickSide is false", () => {
     const decision = makeDecision(
       { ...baseInput, secondsRemaining: 30 },
-      testConfig(),
+      { ...testConfig(), alwaysPickSide: false },
     );
     expect(decision.recommendation).toBe("NO_BET");
   });
@@ -56,7 +56,7 @@ describe("decision engine", () => {
     expect(decision.recommendation).toBe("LOW");
   });
 
-  it("returns NO_BET when edge is insufficient", () => {
+  it("picks HIGH or LOW when edge is insufficient (default always pick)", () => {
     const decision = makeDecision(
       {
         ...baseInput,
@@ -66,7 +66,20 @@ describe("decision engine", () => {
       },
       testConfig(),
     );
-    expect(decision.recommendation).toBe("NO_BET");
+    expect(["HIGH", "LOW"]).toContain(decision.recommendation);
+  });
+
+  it("picks LOW when model favors below strike", () => {
+    const decision = makeDecision(
+      {
+        ...baseInput,
+        highProbability: 0.35,
+        yesAsk: 0.54,
+        noAsk: 0.48,
+      },
+      testConfig(),
+    );
+    expect(decision.recommendation).toBe("LOW");
   });
 });
 
@@ -79,5 +92,6 @@ function testConfig() {
     minimumLiquidity: 10,
     feeCoefficient: 0.07,
     slippage: 0.01,
+    alwaysPickSide: true,
   };
 }

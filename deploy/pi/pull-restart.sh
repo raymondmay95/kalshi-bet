@@ -31,6 +31,10 @@ if ! grep -q '^PAPER_TRADING=' .env 2>/dev/null; then
   echo "PAPER_TRADING=false" >> .env
 fi
 
+if ! grep -q '^ALWAYS_PICK_SIDE=' .env 2>/dev/null; then
+  echo "ALWAYS_PICK_SIDE=true" >> .env
+fi
+
 log "Starting Postgres..."
 docker compose up -d
 

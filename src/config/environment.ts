@@ -30,6 +30,10 @@ const envSchema = z.object({
   TAKER_FEE_COEFFICIENT: z.coerce.number().default(0.07),
   API_PORT: z.coerce.number().default(3001),
   API_HOST: z.string().default("0.0.0.0"),
+  ALWAYS_PICK_SIDE: z
+    .string()
+    .transform((v) => v.toLowerCase() === "true")
+    .default("true"),
 });
 
 export type Env = z.infer<typeof envSchema>;

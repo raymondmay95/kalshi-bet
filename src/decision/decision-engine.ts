@@ -46,6 +46,7 @@ export interface DecisionConfig {
   minimumLiquidity: number;
   feeCoefficient: number;
   slippage: number;
+  alwaysPickSide: boolean;
 }
 
 export function getDefaultDecisionConfig(): DecisionConfig {
@@ -58,7 +59,18 @@ export function getDefaultDecisionConfig(): DecisionConfig {
     minimumLiquidity: 10,
     feeCoefficient: env.TAKER_FEE_COEFFICIENT,
     slippage: env.SLIPPAGE_CENTS,
+    alwaysPickSide: env.ALWAYS_PICK_SIDE,
   };
+}
+
+export function pickDirection(input: {
+  highProbability: number;
+  highEdge: number;
+  lowEdge: number;
+}): "HIGH" | "LOW" {
+  if (input.highEdge > input.lowEdge) return "HIGH";
+  if (input.lowEdge > input.highEdge) return "LOW";
+  return input.highProbability >= 0.5 ? "HIGH" : "LOW";
 }
 
 export function makeDecision(
@@ -76,39 +88,6 @@ export function makeDecision(
     "Price feed is not the authoritative Kalshi settlement source",
   ];
 
-  if (input.dataIsStale) {
-    return noBet("Stale market data", warnings);
-  }
-
-  if (input.secondsRemaining < config.minimumSecondsRemaining) {
-    return noBet(
-      `Only ${input.secondsRemaining}s remaining (minimum ${config.minimumSecondsRemaining}s)`,
-      warnings,
-    );
-  }
-
-  const yesSpread = Math.max(0, input.yesAsk - input.yesBid);
-  const noSpread = Math.max(0, input.noAsk - input.noBid);
-  const maxSpread = Math.max(yesSpread, noSpread);
-
-  if (maxSpread > config.maximumSpread) {
-    return noBet(`Spread ${maxSpread.toFixed(2)} exceeds maximum`, warnings);
-  }
-
-  if (
-    input.yesLiquidity < config.minimumLiquidity &&
-    input.noLiquidity < config.minimumLiquidity
-  ) {
-    return noBet("Insufficient Kalshi liquidity", warnings);
-  }
-
-  if (input.confidence < config.minimumConfidence) {
-    return noBet(
-      `Confidence ${input.confidence.toFixed(2)} below minimum`,
-      warnings,
-    );
-  }
-
   const ev = calculateExpectedValue({
     highProbability: input.highProbability,
     yesAsk: input.yesAsk,
@@ -117,27 +96,61 @@ export function makeDecision(
     slippage: config.slippage,
   });
 
-  if (Math.abs(input.distanceToThresholdBps) >= 1) {
-    reasons.push(
-      `Bitcoin is ${input.distanceToThresholdBps.toFixed(1)} basis points ${input.distanceToThresholdBps >= 0 ? "above" : "below"} the threshold`,
+  if (input.dataIsStale) {
+    warnings.push("Market data may be stale");
+    if (!config.alwaysPickSide) {
+      return noBet("Stale market data", warnings, ev);
+    }
+  }
+
+  if (input.secondsRemaining < config.minimumSecondsRemaining) {
+    warnings.push(
+      `Only ${input.secondsRemaining}s remaining — late-window signal`,
     );
+    if (!config.alwaysPickSide) {
+      return noBet(
+        `Only ${input.secondsRemaining}s remaining (minimum ${config.minimumSecondsRemaining}s)`,
+        warnings,
+        ev,
+      );
+    }
   }
 
-  if (input.momentum30s != null && input.momentum30s > 0) {
-    reasons.push("Thirty-second momentum is positive");
-  } else if (input.momentum30s != null && input.momentum30s < 0) {
-    reasons.push("Thirty-second momentum is negative");
+  const yesSpread = Math.max(0, input.yesAsk - input.yesBid);
+  const noSpread = Math.max(0, input.noAsk - input.noBid);
+  const maxSpread = Math.max(yesSpread, noSpread);
+
+  if (maxSpread > config.maximumSpread) {
+    warnings.push(`Wide spread (${maxSpread.toFixed(2)}) — lower execution quality`);
+    if (!config.alwaysPickSide) {
+      return noBet(`Spread ${maxSpread.toFixed(2)} exceeds maximum`, warnings, ev);
+    }
   }
 
-  if (input.momentum3m != null && input.momentum3m > 0) {
-    reasons.push("Three-minute momentum is positive");
+  if (
+    input.yesLiquidity < config.minimumLiquidity &&
+    input.noLiquidity < config.minimumLiquidity
+  ) {
+    warnings.push("Low Kalshi liquidity");
+    if (!config.alwaysPickSide) {
+      return noBet("Insufficient Kalshi liquidity", warnings, ev);
+    }
   }
 
-  if (input.tradeImbalance > 0.1) {
-    reasons.push("Aggressive trade flow favors buyers");
-  } else if (input.tradeImbalance < -0.1) {
-    reasons.push("Aggressive trade flow favors sellers");
+  if (input.confidence < config.minimumConfidence) {
+    warnings.push(
+      `Model confidence ${input.confidence.toFixed(2)} below usual threshold`,
+    );
+    if (!config.alwaysPickSide) {
+      return noBet(
+        `Confidence ${input.confidence.toFixed(2)} below minimum`,
+        warnings,
+        ev,
+      );
+    }
   }
+
+  appendMarketReasons(input, reasons);
 
   if (
     ev.highEdge >= config.minimumEdge &&
@@ -167,6 +180,27 @@ export function makeDecision(
     };
   }
 
+  const direction = pickDirection({
+    highProbability: input.highProbability,
+    highEdge: ev.highEdge,
+    lowEdge: ev.lowEdge,
+  });
+
+  if (config.alwaysPickSide) {
+    reasons.push(
+      direction === "HIGH"
+        ? `Best estimate: ${(input.highProbability * 100).toFixed(1)}% chance above strike (HIGH edge ${ev.highEdge.toFixed(3)})`
+        : `Best estimate: ${((1 - input.highProbability) * 100).toFixed(1)}% chance below strike (LOW edge ${ev.lowEdge.toFixed(3)})`,
+    );
+    return {
+      recommendation: direction,
+      highEdge: ev.highEdge,
+      lowEdge: ev.lowEdge,
+      reasons,
+      warnings,
+    };
+  }
+
   reasons.push("No side offers sufficient edge after costs");
   return {
     recommendation: "NO_BET",
@@ -177,9 +211,34 @@ export function makeDecision(
   };
 }
 
+function appendMarketReasons(input: DecisionInput, reasons: string[]): void {
+  if (Math.abs(input.distanceToThresholdBps) >= 1) {
+    reasons.push(
+      `Bitcoin is ${input.distanceToThresholdBps.toFixed(1)} basis points ${input.distanceToThresholdBps >= 0 ? "above" : "below"} the threshold`,
+    );
+  }
+
+  if (input.momentum30s != null && input.momentum30s > 0) {
+    reasons.push("Thirty-second momentum is positive");
+  } else if (input.momentum30s != null && input.momentum30s < 0) {
+    reasons.push("Thirty-second momentum is negative");
+  }
+
+  if (input.momentum3m != null && input.momentum3m > 0) {
+    reasons.push("Three-minute momentum is positive");
+  }
+
+  if (input.tradeImbalance > 0.1) {
+    reasons.push("Aggressive trade flow favors buyers");
+  } else if (input.tradeImbalance < -0.1) {
+    reasons.push("Aggressive trade flow favors sellers");
+  }
+}
+
 function noBet(
   reason: string,
   warnings: string[],
+  ev: { highEdge: number; lowEdge: number },
 ): {
   recommendation: Recommendation;
   highEdge: number;
@@ -189,8 +248,8 @@ function noBet(
 } {
   return {
     recommendation: "NO_BET",
-    highEdge: 0,
-    lowEdge: 0,
+    highEdge: ev.highEdge,
+    lowEdge: ev.lowEdge,
     reasons: [reason],
     warnings,
   };
