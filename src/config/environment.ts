@@ -11,6 +11,8 @@ const envSchema = z.object({
     .string()
     .default("wss://stream.binance.com:9443/ws"),
   BINANCE_REST_BASE: z.string().default("https://api.binance.com"),
+  PRICE_FEED: z.enum(["binance", "coinbase"]).default("coinbase"),
+  COINBASE_PRODUCT_ID: z.string().default("BTC-USD"),
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   SNAPSHOT_INTERVAL_MS: z.coerce.number().default(1000),
   KALSHI_POLL_INTERVAL_MS: z.coerce.number().default(2000),

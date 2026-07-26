@@ -54,6 +54,10 @@ ensure_env_files() {
     cp .env.example .env
     log "Created .env from .env.example"
   fi
+  if ! grep -q '^PRICE_FEED=' .env 2>/dev/null; then
+    echo "PRICE_FEED=coinbase" >> .env
+    log "Set PRICE_FEED=coinbase in .env"
+  fi
   if [[ ! -f dashboard/.env.local ]]; then
     PI_IP="$(hostname -I | awk '{print $1}')"
     cat > dashboard/.env.local <<EOF

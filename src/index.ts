@@ -1,5 +1,3 @@
-import { backfillCandles } from "./binance/binance-client.js";
-import { BinanceFeedService } from "./binance/binance-feed.js";
 import { getEnv } from "./config/environment.js";
 import { logger } from "./config/logger.js";
 import {
@@ -11,6 +9,11 @@ import {
   buildPredictionMarketState,
   formatSnapshotLine,
 } from "./market/market-state.js";
+import {
+  backfillPriceCandles,
+  createPriceFeed,
+  type SpotFeedService,
+} from "./market/price-feed.js";
 import type { KalshiMarket } from "./kalshi/kalshi-types.js";
 import { KalshiMarketService } from "./kalshi/market-discovery.js";
 import {
@@ -27,13 +30,13 @@ const DECISION_INTERVALS_SECONDS = [600, 300, 180, 120, 60, 30];
 const PRINT_INTERVAL_MS = 5000;
 
 class PredictionEngine {
-  private binance = new BinanceFeedService({
+  private priceFeed: SpotFeedService = createPriceFeed({
     onTrade: (trade) => this.featureEngine.onTrade(trade),
     onState: (state) => this.featureEngine.onBinanceState(state),
     onCandle: (candle) =>
       this.featureEngine.onPrice(candle.timestamp, candle.close),
     onReconnect: () => {
-      void backfillCandles((candle) =>
+      void backfillPriceCandles((candle) =>
         this.featureEngine.onPrice(candle.timestamp, candle.close),
       );
     },
@@ -55,7 +58,7 @@ class PredictionEngine {
 
   async start(): Promise<void> {
     const env = getEnv();
-    logger.info("Starting Kalshi BTC prediction engine");
+    logger.info({ priceFeed: env.PRICE_FEED }, "Starting Kalshi BTC prediction engine");
 
     try {
       getDb();
@@ -63,17 +66,17 @@ class PredictionEngine {
       logger.warn({ error }, "Database unavailable; running without persistence");
     }
 
-    await backfillCandles((candle) =>
+    await backfillPriceCandles((candle) =>
       this.featureEngine.onPrice(candle.timestamp, candle.close),
     );
 
-    this.binance.start();
+    this.priceFeed.start();
     startApiServer();
 
     await this.kalshi.start({
       onMarketChange: async (market) => {
         this.currentMarket = market;
-        this.openingBtcPrice = this.binance.getState().lastPrice || null;
+        this.openingBtcPrice = this.priceFeed.getState().lastPrice || null;
         this.lastDecisionAtSecond = null;
         this.lastRecordedSecond = null;
         try {
@@ -112,7 +115,7 @@ class PredictionEngine {
   }
 
   async stop(): Promise<void> {
-    this.binance.stop();
+    this.priceFeed.stop();
     this.kalshi.stop();
     if (this.printTimer) clearInterval(this.printTimer);
     if (this.snapshotTimer) clearInterval(this.snapshotTimer);
@@ -123,9 +126,9 @@ class PredictionEngine {
   private async tick(): Promise<void> {
     const market = this.kalshi.getCurrentMarket();
     const kalshiState = this.kalshi.getState();
-    const binanceState = this.binance.getState();
+    const spotState = this.priceFeed.getState();
 
-    if (!market || !kalshiState || binanceState.lastPrice <= 0) {
+    if (!market || !kalshiState || spotState.lastPrice <= 0) {
       return;
     }
 
@@ -133,11 +136,11 @@ class PredictionEngine {
     const secondsRemaining = this.kalshi.getSecondsRemaining();
     const threshold = market.floorStrike ?? 0;
     const dataIsStale =
-      this.binance.isStale(env.BINANCE_STALE_MS) ||
+      this.priceFeed.isStale(env.BINANCE_STALE_MS) ||
       this.kalshi.isStale(env.KALSHI_STALE_MS);
 
     const features = this.featureEngine.computeFeatures({
-      binance: binanceState,
+      binance: spotState,
       kalshi: kalshiState,
       threshold,
       secondsRemaining,
@@ -178,8 +181,8 @@ class PredictionEngine {
       intervalStart: market.openTime.getTime(),
       intervalEnd: market.closeTime.getTime(),
       btcPrice: features.currentPrice,
-      btcBid: binanceState.bid,
-      btcAsk: binanceState.ask,
+      btcBid: spotState.bid,
+      btcAsk: spotState.ask,
       kalshiYesBid: kalshiState.yesBid,
       kalshiYesAsk: kalshiState.yesAsk,
       kalshiNoBid: kalshiState.noBid,
@@ -257,9 +260,9 @@ class PredictionEngine {
   private async printSnapshot(): Promise<void> {
     const market = this.kalshi.getCurrentMarket();
     const kalshiState = this.kalshi.getState();
-    const binanceState = this.binance.getState();
+    const spotState = this.priceFeed.getState();
 
-    if (!market || !kalshiState || binanceState.lastPrice <= 0) {
+    if (!market || !kalshiState || spotState.lastPrice <= 0) {
       logger.warn("Waiting for market data...");
       return;
     }
@@ -269,9 +272,9 @@ class PredictionEngine {
       threshold: market.floorStrike ?? 0,
       intervalStart: market.openTime.getTime(),
       intervalEnd: market.closeTime.getTime(),
-      btcPrice: binanceState.lastPrice,
-      btcBid: binanceState.bid,
-      btcAsk: binanceState.ask,
+      btcPrice: spotState.lastPrice,
+      btcBid: spotState.bid,
+      btcAsk: spotState.ask,
       kalshiYesBid: kalshiState.yesBid,
       kalshiYesAsk: kalshiState.yesAsk,
       kalshiNoBid: kalshiState.noBid,
@@ -285,9 +288,9 @@ class PredictionEngine {
   private async recordSnapshot(): Promise<void> {
     const market = this.kalshi.getCurrentMarket();
     const kalshiState = this.kalshi.getState();
-    const binanceState = this.binance.getState();
+    const spotState = this.priceFeed.getState();
 
-    if (!market || !kalshiState || binanceState.lastPrice <= 0) {
+    if (!market || !kalshiState || spotState.lastPrice <= 0) {
       return;
     }
 
@@ -299,7 +302,7 @@ class PredictionEngine {
 
     const threshold = market.floorStrike ?? 0;
     const features = this.featureEngine.computeFeatures({
-      binance: binanceState,
+      binance: spotState,
       kalshi: kalshiState,
       threshold,
       secondsRemaining,
@@ -311,8 +314,8 @@ class PredictionEngine {
       intervalStart: market.openTime.getTime(),
       intervalEnd: market.closeTime.getTime(),
       btcPrice: features.currentPrice,
-      btcBid: binanceState.bid,
-      btcAsk: binanceState.ask,
+      btcBid: spotState.bid,
+      btcAsk: spotState.ask,
       kalshiYesBid: kalshiState.yesBid,
       kalshiYesAsk: kalshiState.yesAsk,
       kalshiNoBid: kalshiState.noBid,
