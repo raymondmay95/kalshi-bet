@@ -11,7 +11,7 @@ Group=@RUN_GROUP@
 WorkingDirectory=@INSTALL_DIR@
 Environment=NODE_ENV=production
 EnvironmentFile=-@INSTALL_DIR@/.env
-ExecStartPre=/usr/bin/docker compose -f @INSTALL_DIR@/docker-compose.yml up -d
+ExecStartPre=@DOCKER_BIN@ compose -f @INSTALL_DIR@/docker-compose.yml up -d
 ExecStart=@NODE_BIN@ @INSTALL_DIR@/dist/src/index.js
 Restart=always
 RestartSec=10

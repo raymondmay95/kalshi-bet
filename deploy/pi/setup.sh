@@ -80,10 +80,10 @@ for i in {1..30}; do
 done
 
 log "Applying database schema..."
-npm run db:push
+npm run db:push || log "WARNING: db:push failed — you can retry with: npm run db:push"
 
 log "Installing systemd services..."
-sudo INSTALL_DIR="$ROOT_DIR" bash deploy/pi/install-services.sh
+bash deploy/pi/install-services.sh
 
 log ""
 log "Setup complete."

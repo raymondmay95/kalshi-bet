@@ -64,6 +64,25 @@ crontab -e
 # 0 0 * * * cd /home/pi/kalshi-bet && npm run report:daily >> /home/pi/kalshi-bet/report.log 2>&1
 ```
 
+## Service install failed ("Unit does not exist")
+
+The systemd files are created by `deploy/pi/install-services.sh`. If `systemctl` says the unit does not exist, run:
+
+```bash
+cd ~/kalshi-bet
+npm run build
+bash deploy/pi/install-services.sh
+ls -l /etc/systemd/system/kalshi-bet*.service
+sudo systemctl enable --now kalshi-bet kalshi-bet-dashboard
+```
+
+If the install script says node/npm not found, install Node first:
+
+```bash
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt-get install -y nodejs
+```
+
 ## Troubleshooting
 
 **Binance blocked**
