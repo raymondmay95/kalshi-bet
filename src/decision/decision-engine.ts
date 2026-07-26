@@ -106,9 +106,7 @@ export function makeDecision(
   warnings: string[];
 } {
   const reasons: string[] = [];
-  const warnings: string[] = [
-    "Price feed is not the authoritative Kalshi settlement source",
-  ];
+  const warnings: string[] = [];
 
   const ev = calculateExpectedValue({
     highProbability: input.highProbability,

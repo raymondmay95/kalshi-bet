@@ -19,6 +19,7 @@ interface LiveState {
   } | null;
   recommendation: {
     recommendation: "HIGH" | "LOW" | "NO_BET";
+    predictedDirection: "HIGH" | "LOW";
     highProbability: number;
     lowProbability: number;
     highEdge: number;
@@ -50,6 +51,8 @@ interface HistoryRow {
   secondsRemaining: number | null;
 }
 
+type SignalFilter = "ALL" | "ACTIONABLE" | "HIGH" | "LOW" | "NO_BET";
+
 export default function DashboardPage() {
   const chartRef = useRef<HTMLDivElement>(null);
   const chartApi = useRef<IChartApi | null>(null);
@@ -58,7 +61,7 @@ export default function DashboardPage() {
   const [live, setLive] = useState<LiveState | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [performance, setPerformance] = useState<PerformanceSummary | null>(null);
-  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
+  const [signalFilter, setSignalFilter] = useState<SignalFilter>("ACTIONABLE");
 
   useEffect(() => {
     if (!chartRef.current) return;
@@ -103,7 +106,6 @@ export default function DashboardPage() {
         setLive(liveData);
         setHistory(histData);
         setPerformance(perfData);
-        setApiOnline(true);
 
         if (liveData.marketState && priceSeries.current && strikeSeries.current) {
           const now = Math.floor(Date.now() / 1000) as UTCTimestamp;
@@ -111,7 +113,7 @@ export default function DashboardPage() {
           strikeSeries.current.update({ time: now, value: liveData.marketState.threshold });
         }
       } catch {
-        if (mounted) setApiOnline(false);
+        // Keep last known dashboard state if the API briefly fails.
       }
     };
 
@@ -125,23 +127,27 @@ export default function DashboardPage() {
 
   const rec = live?.recommendation;
   const market = live?.marketState;
-  const signalStatus =
-    apiOnline === false
-      ? "OFFLINE"
-      : apiOnline == null
-        ? "CONNECTING"
-        : !rec || !market
-          ? "WAITING"
-          : Date.now() - live.updatedAt > 10_000
-            ? "STALE"
-            : "LIVE";
-  const signalStatusClass = signalStatus.toLowerCase();
-  const recColor =
-    rec?.recommendation === "HIGH"
+  const priceSide: "HIGH" | "LOW" | "SAME" | null = market
+    ? Math.abs(market.btcPrice - market.threshold) < 0.01
+      ? "SAME"
+      : market.btcPrice > market.threshold
+        ? "HIGH"
+        : "LOW"
+    : null;
+  const forecastSide = rec?.predictedDirection ?? null;
+  const forecastColor =
+    forecastSide === "HIGH"
       ? "#22c55e"
-      : rec?.recommendation === "LOW"
+      : forecastSide === "LOW"
         ? "#ef4444"
         : "#94a3b8";
+  const filteredHistory = history.filter((row) => {
+    if (signalFilter === "ALL") return true;
+    if (signalFilter === "ACTIONABLE") {
+      return row.recommendation === "HIGH" || row.recommendation === "LOW";
+    }
+    return row.recommendation === signalFilter;
+  });
 
   return (
     <main className="dashboard-main">
@@ -159,15 +165,24 @@ export default function DashboardPage() {
         <section className="card">
           <div className="card-heading-row">
             <h2 className="card-heading">Signal</h2>
-            <span className={`status-badge status-${signalStatusClass}`}>
-              <span className="status-dot" aria-hidden="true" />
-              {signalStatus}
-            </span>
+            {priceSide ? (
+              <span className={`status-badge status-${priceSide.toLowerCase()}`}>
+                <DirectionArrow side={priceSide} size={12} />
+                {priceSide}
+              </span>
+            ) : null}
           </div>
           {rec ? (
             <>
-              <div className="signal-value" style={{ color: recColor }}>
-                {rec.recommendation}
+              <div className="signal-value" style={{ color: forecastColor }}>
+                {forecastSide ? (
+                  <>
+                    <DirectionArrow side={forecastSide} size={28} />
+                    {forecastSide}
+                  </>
+                ) : (
+                  rec.recommendation
+                )}
               </div>
               <Metric label="P(HIGH)" value={`${(rec.highProbability * 100).toFixed(1)}%`} />
               <Metric label="HIGH edge" value={rec.highEdge.toFixed(3)} />
@@ -233,7 +248,24 @@ export default function DashboardPage() {
       </div>
 
       <section className="card history-section">
-        <h2 className="card-heading">Prediction History</h2>
+        <div className="card-heading-row">
+          <h2 className="card-heading">Prediction History</h2>
+          <label className="history-filter">
+            <span className="history-filter-label">Signal</span>
+            <select
+              value={signalFilter}
+              onChange={(event) =>
+                setSignalFilter(event.target.value as SignalFilter)
+              }
+            >
+              <option value="ACTIONABLE">HIGH / LOW</option>
+              <option value="ALL">All</option>
+              <option value="HIGH">HIGH</option>
+              <option value="LOW">LOW</option>
+              <option value="NO_BET">NO_BET</option>
+            </select>
+          </label>
+        </div>
         <div className="table-wrapper">
           <table className="history-table">
             <thead>
@@ -247,24 +279,32 @@ export default function DashboardPage() {
               </tr>
             </thead>
             <tbody>
-              {history.slice(0, 20).map((row) => (
-                <tr key={row.id}>
-                  <td>{new Date(row.timestamp).toLocaleTimeString()}</td>
-                  <td>{row.recommendation}</td>
-                  <td>{(row.predictedHigh * 100).toFixed(1)}%</td>
-                  <td>{row.confidence.toFixed(2)}</td>
-                  <td>{row.finalResult ?? "pending"}</td>
-                  <td>
-                    {row.correct == null
-                      ? row.recommendation === "NO_BET"
-                        ? "—"
-                        : "pending"
-                      : row.correct
-                        ? "yes"
-                        : "no"}
+              {filteredHistory.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="history-empty">
+                    No predictions match this filter
                   </td>
                 </tr>
-              ))}
+              ) : (
+                filteredHistory.slice(0, 20).map((row) => (
+                  <tr key={row.id}>
+                    <td>{new Date(row.timestamp).toLocaleTimeString()}</td>
+                    <td>{row.recommendation}</td>
+                    <td>{(row.predictedHigh * 100).toFixed(1)}%</td>
+                    <td>{row.confidence.toFixed(2)}</td>
+                    <td>{formatOutcome(row.finalResult)}</td>
+                    <td>
+                      {row.correct == null
+                        ? row.recommendation === "NO_BET"
+                          ? "—"
+                          : "pending"
+                        : row.correct
+                          ? "yes"
+                          : "no"}
+                    </td>
+                  </tr>
+                ))
+              )}
             </tbody>
           </table>
         </div>
@@ -279,5 +319,40 @@ function Metric({ label, value }: { label: string; value: string }) {
       <span className="metric-label">{label}</span>
       <span>{value}</span>
     </div>
+  );
+}
+
+function formatOutcome(finalResult: string | null): string {
+  if (finalResult === "yes") return "HIGH";
+  if (finalResult === "no") return "LOW";
+  return "pending";
+}
+
+function DirectionArrow({
+  side,
+  size = 14,
+}: {
+  side: "HIGH" | "LOW" | "SAME";
+  size?: number;
+}) {
+  return (
+    <svg
+      className="direction-arrow"
+      viewBox="0 0 16 16"
+      width={size}
+      height={size}
+      aria-hidden="true"
+    >
+      {side === "HIGH" ? (
+        <path d="M8 3.5 13 10H3L8 3.5Z" fill="currentColor" />
+      ) : side === "LOW" ? (
+        <path d="M8 12.5 3 6h10L8 12.5Z" fill="currentColor" />
+      ) : (
+        <>
+          <path d="M6.5 4.5 2 8l4.5 3.5V4.5Z" fill="currentColor" />
+          <path d="M9.5 4.5v7L14 8 9.5 4.5Z" fill="currentColor" />
+        </>
+      )}
+    </svg>
   );
 }

@@ -58,7 +58,7 @@
 .status-badge {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 4px;
   padding: 4px 8px;
   border: 1px solid currentColor;
   border-radius: 999px;
@@ -67,42 +67,54 @@
   letter-spacing: 0.05em;
 }
 
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: currentColor;
-}
-
-.status-live {
+.status-high {
   color: #22c55e;
 }
 
-.status-live .status-dot {
-  animation: status-pulse 1.8s ease-in-out infinite;
-}
-
-.status-stale,
-.status-waiting {
-  color: #f59e0b;
-}
-
-.status-offline {
+.status-low {
   color: #ef4444;
 }
 
-.status-connecting {
+.status-same {
   color: #94a3b8;
 }
 
-@keyframes status-pulse {
-  50% {
-    opacity: 0.35;
-  }
+.direction-arrow {
+  display: inline-block;
+  flex-shrink: 0;
+  vertical-align: -2px;
 }
 
 .history-section {
   margin-top: 16px;
+}
+
+.history-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #94a3b8;
+  font-size: 12px;
+}
+
+.history-filter-label {
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.history-filter select {
+  background: #0b1220;
+  color: #e2e8f0;
+  border: 1px solid #334155;
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+.history-empty {
+  color: #94a3b8;
+  text-align: center;
+  padding: 20px 4px !important;
 }
 
 .table-wrapper {
@@ -134,6 +146,9 @@
 }
 
 .signal-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 32px;
   font-weight: 700;
 }
