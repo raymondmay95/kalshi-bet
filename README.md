@@ -1,6 +1,8 @@
 # Kalshi BTC 15-Minute Prediction Engine
 
-TypeScript engine that streams Binance BTCUSDT data, tracks the active Kalshi `KXBTC15M` market, estimates settlement probability using a baseline z-score model adjusted for 60-second BRTI averaging, and emits `HIGH` / `LOW` / `NO_BET` recommendations with paper trading and a dashboard.
+TypeScript engine that streams Binance BTCUSDT data, tracks the active Kalshi `KXBTC15M` market, estimates settlement probability using a drift-adjusted z-score model (time-scaled realized volatility plus a momentum/order-flow drift term), and emits `HIGH` / `LOW` / `NO_BET` recommendations with paper trading and a dashboard.
+
+The prediction is made **once, shortly after each 15-minute market opens, and locked** until the next interval. It is never revised mid-window, so the recorded history reflects genuine start-of-interval forecasts.
 
 ## Raspberry Pi (recommended for 24/7)
 
@@ -69,7 +71,7 @@ cd dashboard && npm install && cp .env.local.example .env.local && npm run dev
 - `src/binance/` — WebSocket feed (aggTrade, bookTicker, depth20, kline_1m) + REST backfill
 - `src/kalshi/` — KXBTC15M discovery, order book polling, settlement capture
 - `src/market/` — rolling features and unified market state
-- `src/model/` — baseline probability with `T_eff = max(secondsRemaining - 30, 1)`
+- `src/model/` — drift-adjusted z-score probability: `z = (P − K + μ·T_eff) / (σ·√T_eff)` with per-√second realized volatility, price-relative vol floor/cap, momentum + trade/book-imbalance drift (capped at 1.5σ), and log-odds shrinkage
 - `src/decision/` — Kalshi fee formula, EV, filters, recommendation output
 - `src/storage/` — Drizzle + Postgres snapshots, predictions, paper trades
 - `src/simulation/` — paper trader and settlement P&L

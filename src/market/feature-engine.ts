@@ -15,6 +15,8 @@ export interface FeatureSnapshot {
   secondsRemaining: number;
   returns: Record<string, number | null>;
   realizedVolatility: Record<string, number | null>;
+  /** Relative log-return volatility per sqrt-second, keyed by window. */
+  volatilityPerSqrtSecond: Record<string, number | null>;
   tradeImbalance: number;
   bookImbalance: number;
   microprice: number;
@@ -71,9 +73,12 @@ export class FeatureEngine {
     }
 
     const realizedVolatility: Record<string, number | null> = {};
+    const volatilityPerSqrtSecond: Record<string, number | null> = {};
     for (const windowMs of VOL_WINDOWS_MS) {
       realizedVolatility[`vol_${windowMs}ms`] =
         this.priceHistory.getRealizedVolatility(windowMs, now);
+      volatilityPerSqrtSecond[`volps_${windowMs}ms`] =
+        this.priceHistory.getRealizedVolatilityPerSqrtSecond(windowMs, now);
     }
 
     const totalVolume =
@@ -108,6 +113,7 @@ export class FeatureEngine {
       secondsRemaining: input.secondsRemaining,
       returns,
       realizedVolatility,
+      volatilityPerSqrtSecond,
       tradeImbalance,
       bookImbalance,
       microprice: input.binance.microprice || price,

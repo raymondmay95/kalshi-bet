@@ -40,6 +40,14 @@ export class RollingWindow {
 export class PriceHistory {
   private readonly windows = new Map<number, RollingWindow>();
 
+  constructor() {
+    // Pre-register the standard windows so prices recorded before the
+    // first read (e.g. backfilled candles at startup) are not dropped.
+    for (const windowMs of new Set([...RETURN_WINDOWS_MS, ...VOL_WINDOWS_MS])) {
+      this.windows.set(windowMs, new RollingWindow(windowMs));
+    }
+  }
+
   addPrice(timestamp: number, price: number): void {
     for (const window of this.windows.values()) {
       window.add(timestamp, price);
@@ -81,6 +89,43 @@ export class PriceHistory {
 
     if (returns.length === 0) return null;
     return standardDeviation(returns);
+  }
+
+  /**
+   * Realized volatility of log returns scaled to a per-square-root-second
+   * basis: sqrt(sum of squared returns / elapsed seconds).
+   *
+   * Unlike getRealizedVolatility (per-tick std dev), this is invariant to
+   * how many trades arrive per second, so it can be safely projected with
+   * the sqrt-of-time rule.
+   */
+  getRealizedVolatilityPerSqrtSecond(
+    windowMs: number,
+    now = Date.now(),
+  ): number | null {
+    const window = this.getWindow(windowMs);
+    window.prune(now);
+    const values = window.getValues();
+    if (values.length < 2) return null;
+
+    const elapsedSeconds =
+      (values.at(-1)!.timestamp - values[0]!.timestamp) / 1000;
+    if (elapsedSeconds <= 0) return null;
+
+    let sumSquaredReturns = 0;
+    let returnCount = 0;
+    for (let i = 1; i < values.length; i += 1) {
+      const prev = values[i - 1]!.value;
+      const curr = values[i]!.value;
+      if (prev > 0 && curr > 0) {
+        const logReturn = Math.log(curr / prev);
+        sumSquaredReturns += logReturn * logReturn;
+        returnCount += 1;
+      }
+    }
+
+    if (returnCount === 0) return null;
+    return Math.sqrt(sumSquaredReturns / elapsedSeconds);
   }
 }
 

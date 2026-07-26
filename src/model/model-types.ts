@@ -4,6 +4,6 @@ export interface ModelVersion {
 }
 
 export const BASELINE_MODEL: ModelVersion = {
-  name: "baseline-zscore",
-  version: "1.0.0",
+  name: "drift-zscore",
+  version: "2.0.0",
 };

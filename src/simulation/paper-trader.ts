@@ -3,7 +3,6 @@ import type { BetRecommendation } from "../decision/decision-engine.js";
 import { kalshiFee } from "../decision/fees.js";
 
 export interface PaperTradeInput {
-  predictionId: number;
   recommendation: BetRecommendation;
 }
 

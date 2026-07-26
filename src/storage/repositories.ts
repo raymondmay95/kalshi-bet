@@ -3,6 +3,7 @@ import type { BetRecommendation } from "../decision/decision-engine.js";
 import type { FeatureSnapshot } from "../market/feature-engine.js";
 import type { KalshiMarket } from "../kalshi/kalshi-types.js";
 import type { PredictionMarketState } from "../market/market-state.js";
+import type { PaperTradeResult } from "../simulation/paper-trader.js";
 import { BASELINE_MODEL } from "../model/model-types.js";
 import type { ProbabilityOutput } from "../model/baseline-probability.js";
 import { getDb } from "./database.js";
@@ -37,6 +38,8 @@ export class RecorderService {
         ? ((openingBtcPrice - market.floorStrike) / market.floorStrike) * 10_000
         : null;
 
+    // onConflictDoNothing + re-select keeps this safe against concurrent
+    // callers racing to create the same interval (ticker is unique).
     const inserted = await db
       .insert(marketIntervals)
       .values({
@@ -48,10 +51,21 @@ export class RecorderService {
         settlementRule: market.settlementRule,
         openingBasisBps,
       })
+      .onConflictDoNothing({ target: marketIntervals.kalshiTicker })
       .returning({ id: marketIntervals.id });
 
-    this.currentIntervalId = inserted[0]!.id;
-    return inserted[0]!.id;
+    if (inserted[0]) {
+      this.currentIntervalId = inserted[0].id;
+      return inserted[0].id;
+    }
+
+    const winner = await db
+      .select()
+      .from(marketIntervals)
+      .where(eq(marketIntervals.kalshiTicker, market.ticker))
+      .limit(1);
+    this.currentIntervalId = winner[0]!.id;
+    return winner[0]!.id;
   }
 
   async recordSnapshot(input: {
@@ -78,50 +92,62 @@ export class RecorderService {
     });
   }
 
-  async recordPrediction(input: {
+  /**
+   * Atomically persist a locked prediction and its paper trade.
+   *
+   * The interval is resolved from the market the prediction was made for
+   * (not from shared mutable state), so the prediction can never be
+   * attached to a stale interval. Both rows are written in one
+   * transaction: either the prediction and its bet both exist, or
+   * neither does.
+   */
+  async recordPredictionAndTrade(input: {
+    market: KalshiMarket;
+    openingBtcPrice?: number;
     probability: ProbabilityOutput;
     recommendation: BetRecommendation;
-  }): Promise<number | null> {
-    if (!this.currentIntervalId) return null;
+    paperTrade: PaperTradeResult | null;
+  }): Promise<number> {
+    const intervalId = await this.ensureMarketInterval(
+      input.market,
+      input.openingBtcPrice,
+    );
 
     const db = getDb();
-    const inserted = await db
-      .insert(predictions)
-      .values({
-        marketIntervalId: this.currentIntervalId,
-        timestamp: new Date(input.recommendation.timestamp),
-        modelVersion: `${BASELINE_MODEL.name}@${BASELINE_MODEL.version}`,
-        rawHighProbability: input.probability.rawHighProbability,
-        adjustedHighProbability: input.recommendation.highProbability,
-        highEdge: input.recommendation.highEdge,
-        lowEdge: input.recommendation.lowEdge,
-        recommendation: input.recommendation.recommendation,
-        confidence: input.recommendation.confidence,
-        secondsRemaining: input.recommendation.secondsRemaining,
-        reasonCodes: {
-          reasons: input.recommendation.reasons,
-          warnings: input.recommendation.warnings,
-        },
-      })
-      .returning({ id: predictions.id });
+    return db.transaction(async (tx) => {
+      const inserted = await tx
+        .insert(predictions)
+        .values({
+          marketIntervalId: intervalId,
+          timestamp: new Date(input.recommendation.timestamp),
+          modelVersion: `${BASELINE_MODEL.name}@${BASELINE_MODEL.version}`,
+          rawHighProbability: input.probability.rawHighProbability,
+          adjustedHighProbability: input.recommendation.highProbability,
+          highEdge: input.recommendation.highEdge,
+          lowEdge: input.recommendation.lowEdge,
+          recommendation: input.recommendation.recommendation,
+          confidence: input.recommendation.confidence,
+          secondsRemaining: input.recommendation.secondsRemaining,
+          reasonCodes: {
+            reasons: input.recommendation.reasons,
+            warnings: input.recommendation.warnings,
+          },
+        })
+        .returning({ id: predictions.id });
 
-    return inserted[0]?.id ?? null;
-  }
+      const predictionId = inserted[0]!.id;
 
-  async recordPaperTrade(input: {
-    predictionId: number;
-    side: "HIGH" | "LOW";
-    entryPrice: number;
-    quantity: number;
-    simulatedFees: number;
-  }): Promise<void> {
-    const db = getDb();
-    await db.insert(paperTrades).values({
-      predictionId: input.predictionId,
-      side: input.side,
-      entryPrice: input.entryPrice,
-      quantity: input.quantity,
-      simulatedFees: input.simulatedFees,
+      if (input.paperTrade) {
+        await tx.insert(paperTrades).values({
+          predictionId,
+          side: input.paperTrade.side,
+          entryPrice: input.paperTrade.entryPrice,
+          quantity: input.paperTrade.quantity,
+          simulatedFees: input.paperTrade.simulatedFees,
+        });
+      }
+
+      return predictionId;
     });
   }
 

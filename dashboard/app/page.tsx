@@ -127,36 +127,36 @@ export default function DashboardPage() {
         : "#94a3b8";
 
   return (
-    <main style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
-      <h1 style={{ marginTop: 0 }}>Kalshi BTC 15m Prediction Engine</h1>
-      <p style={{ color: "#94a3b8" }}>
+    <main className="dashboard-main">
+      <h1 className="dashboard-title">Kalshi BTC 15m Prediction Engine</h1>
+      <p className="dashboard-subtitle">
         Advisory signals only — records every guess and outcome for model refinement
       </p>
 
-      <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 16 }}>
-        <section style={cardStyle}>
-          <h2 style={headingStyle}>BTC vs Strike</h2>
+      <div className="grid-top">
+        <section className="card">
+          <h2 className="card-heading">BTC vs Strike</h2>
           <div ref={chartRef} />
         </section>
 
-        <section style={cardStyle}>
-          <h2 style={headingStyle}>Signal</h2>
+        <section className="card">
+          <h2 className="card-heading">Signal</h2>
           {rec ? (
             <>
-              <div style={{ fontSize: 32, fontWeight: 700, color: recColor }}>
+              <div className="signal-value" style={{ color: recColor }}>
                 {rec.recommendation}
               </div>
               <Metric label="P(HIGH)" value={`${(rec.highProbability * 100).toFixed(1)}%`} />
               <Metric label="HIGH edge" value={rec.highEdge.toFixed(3)} />
               <Metric label="LOW edge" value={rec.lowEdge.toFixed(3)} />
               <Metric label="Confidence" value={rec.confidence.toFixed(2)} />
-              <ul style={{ paddingLeft: 18, color: "#cbd5e1" }}>
+              <ul className="reasons-list">
                 {rec.reasons.map((reason) => (
                   <li key={reason}>{reason}</li>
                 ))}
               </ul>
               {rec.warnings.map((warning) => (
-                <p key={warning} style={{ color: "#fbbf24", fontSize: 13 }}>
+                <p key={warning} className="warning-text">
                   {warning}
                 </p>
               ))}
@@ -167,9 +167,9 @@ export default function DashboardPage() {
         </section>
       </div>
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <section style={cardStyle}>
-          <h2 style={headingStyle}>Market State</h2>
+      <div className="grid-middle">
+        <section className="card">
+          <h2 className="card-heading">Market State</h2>
           {market ? (
             <>
               <Metric label="Ticker" value={market.kalshiTicker} />
@@ -185,8 +185,8 @@ export default function DashboardPage() {
           )}
         </section>
 
-        <section style={cardStyle}>
-          <h2 style={headingStyle}>Track Record</h2>
+        <section className="card">
+          <h2 className="card-heading">Track Record</h2>
           <Metric label="Predictions logged" value={String(performance?.totalPredictions ?? 0)} />
           <Metric label="Evaluated" value={String(performance?.evaluatedPredictions ?? 0)} />
           <Metric label="HIGH/LOW signals" value={String(performance?.actionableSignals ?? 0)} />
@@ -209,40 +209,42 @@ export default function DashboardPage() {
         </section>
       </div>
 
-      <section style={{ ...cardStyle, marginTop: 16 }}>
-        <h2 style={headingStyle}>Prediction History</h2>
-        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
-          <thead>
-            <tr style={{ textAlign: "left", color: "#94a3b8" }}>
-              <th>Time</th>
-              <th>Signal</th>
-              <th>P(HIGH)</th>
-              <th>Conf</th>
-              <th>Outcome</th>
-              <th>Correct?</th>
-            </tr>
-          </thead>
-          <tbody>
-            {history.slice(0, 20).map((row) => (
-              <tr key={row.id} style={{ borderTop: "1px solid #1f2937" }}>
-                <td>{new Date(row.timestamp).toLocaleTimeString()}</td>
-                <td>{row.recommendation}</td>
-                <td>{(row.predictedHigh * 100).toFixed(1)}%</td>
-                <td>{row.confidence.toFixed(2)}</td>
-                <td>{row.finalResult ?? "pending"}</td>
-                <td>
-                  {row.correct == null
-                    ? row.recommendation === "NO_BET"
-                      ? "—"
-                      : "pending"
-                    : row.correct
-                      ? "yes"
-                      : "no"}
-                </td>
+      <section className="card history-section">
+        <h2 className="card-heading">Prediction History</h2>
+        <div className="table-wrapper">
+          <table className="history-table">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Signal</th>
+                <th>P(HIGH)</th>
+                <th>Conf</th>
+                <th>Outcome</th>
+                <th>Correct?</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {history.slice(0, 20).map((row) => (
+                <tr key={row.id}>
+                  <td>{new Date(row.timestamp).toLocaleTimeString()}</td>
+                  <td>{row.recommendation}</td>
+                  <td>{(row.predictedHigh * 100).toFixed(1)}%</td>
+                  <td>{row.confidence.toFixed(2)}</td>
+                  <td>{row.finalResult ?? "pending"}</td>
+                  <td>
+                    {row.correct == null
+                      ? row.recommendation === "NO_BET"
+                        ? "—"
+                        : "pending"
+                      : row.correct
+                        ? "yes"
+                        : "no"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </section>
     </main>
   );
@@ -250,22 +252,9 @@ export default function DashboardPage() {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-      <span style={{ color: "#94a3b8" }}>{label}</span>
+    <div className="metric-row">
+      <span className="metric-label">{label}</span>
       <span>{value}</span>
     </div>
   );
 }
-
-const cardStyle: React.CSSProperties = {
-  background: "#121826",
-  border: "1px solid #1f2937",
-  borderRadius: 12,
-  padding: 16,
-};
-
-const headingStyle: React.CSSProperties = {
-  marginTop: 0,
-  fontSize: 16,
-  color: "#cbd5e1",
-};

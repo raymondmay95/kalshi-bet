@@ -1,0 +1,177 @@
+* {
+  box-sizing: border-box;
+}
+
+.dashboard-main {
+  padding: 24px;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.dashboard-title {
+  margin-top: 0;
+  font-size: 1.75rem;
+}
+
+.dashboard-subtitle {
+  color: #94a3b8;
+  font-size: 0.9rem;
+}
+
+.grid-top {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.grid-middle {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+.card {
+  background: #121826;
+  border: 1px solid #1f2937;
+  border-radius: 12px;
+  padding: 16px;
+}
+
+.card-heading {
+  margin-top: 0;
+  font-size: 16px;
+  color: #cbd5e1;
+}
+
+.history-section {
+  margin-top: 16px;
+}
+
+.table-wrapper {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+.history-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+  min-width: 500px;
+}
+
+.history-table th {
+  text-align: left;
+  color: #94a3b8;
+  padding: 8px 4px;
+  white-space: nowrap;
+}
+
+.history-table td {
+  padding: 8px 4px;
+  white-space: nowrap;
+}
+
+.history-table tbody tr {
+  border-top: 1px solid #1f2937;
+}
+
+.signal-value {
+  font-size: 32px;
+  font-weight: 700;
+}
+
+.metric-row {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+
+.metric-label {
+  color: #94a3b8;
+}
+
+.reasons-list {
+  padding-left: 18px;
+  color: #cbd5e1;
+  margin: 8px 0;
+}
+
+.warning-text {
+  color: #fbbf24;
+  font-size: 13px;
+  margin: 4px 0;
+}
+
+/* Mobile styles */
+@media (max-width: 768px) {
+  .dashboard-main {
+    padding: 16px;
+  }
+
+  .dashboard-title {
+    font-size: 1.4rem;
+  }
+
+  .grid-top,
+  .grid-middle {
+    grid-template-columns: 1fr;
+  }
+
+  .card {
+    padding: 12px;
+  }
+
+  .signal-value {
+    font-size: 28px;
+  }
+
+  .history-table {
+    font-size: 13px;
+  }
+}
+
+@media (max-width: 480px) {
+  .dashboard-main {
+    padding: 12px;
+  }
+
+  .dashboard-title {
+    font-size: 1.25rem;
+  }
+
+  .dashboard-subtitle {
+    font-size: 0.85rem;
+  }
+
+  .card {
+    padding: 10px;
+    border-radius: 8px;
+  }
+
+  .card-heading {
+    font-size: 14px;
+  }
+
+  .signal-value {
+    font-size: 24px;
+  }
+
+  .metric-row {
+    font-size: 14px;
+    margin-bottom: 6px;
+  }
+
+  .history-table {
+    font-size: 12px;
+  }
+
+  .reasons-list {
+    font-size: 14px;
+    padding-left: 14px;
+  }
+
+  .warning-text {
+    font-size: 12px;
+  }
+}
