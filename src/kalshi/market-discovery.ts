@@ -92,13 +92,9 @@ export class KalshiMarketService {
         orderbook.yes[0]?.price ?? this.currentMarket.yesBid;
       const noBid = orderbook.no[0]?.price ?? this.currentMarket.noBid;
       const yesAsk =
-        this.currentMarket.yesAsk > 0
-          ? this.currentMarket.yesAsk
-          : deriveAskFromBid(noBid);
+        noBid > 0 ? deriveAskFromBid(noBid) : this.currentMarket.yesAsk;
       const noAsk =
-        this.currentMarket.noAsk > 0
-          ? this.currentMarket.noAsk
-          : deriveAskFromBid(yesBid);
+        yesBid > 0 ? deriveAskFromBid(yesBid) : this.currentMarket.noAsk;
 
       const yesLiquidity = orderbook.yes.reduce((sum, l) => sum + l.quantity, 0);
       const noLiquidity = orderbook.no.reduce((sum, l) => sum + l.quantity, 0);

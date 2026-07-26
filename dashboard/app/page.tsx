@@ -29,14 +29,24 @@ interface LiveState {
   } | null;
 }
 
-interface PredictionRow {
+interface PerformanceSummary {
+  totalPredictions: number;
+  evaluatedPredictions: number;
+  actionableSignals: number;
+  correctSignals: number;
+  accuracy: number | null;
+  averageBrier: number | null;
+}
+
+interface HistoryRow {
   id: number;
-  recommendation: string;
-  adjustedHighProbability: number;
-  highEdge: number;
-  lowEdge: number;
-  confidence: number;
   timestamp: string;
+  recommendation: string;
+  predictedHigh: number;
+  confidence: number;
+  finalResult: string | null;
+  correct: boolean | null;
+  secondsRemaining: number | null;
 }
 
 export default function DashboardPage() {
@@ -45,8 +55,8 @@ export default function DashboardPage() {
   const priceSeries = useRef<ISeriesApi<"Line"> | null>(null);
   const strikeSeries = useRef<ISeriesApi<"Line"> | null>(null);
   const [live, setLive] = useState<LiveState | null>(null);
-  const [predictions, setPredictions] = useState<PredictionRow[]>([]);
-  const [performance, setPerformance] = useState<{ totalPnl: number; settledTrades: number } | null>(null);
+  const [history, setHistory] = useState<HistoryRow[]>([]);
+  const [performance, setPerformance] = useState<PerformanceSummary | null>(null);
 
   useEffect(() => {
     if (!chartRef.current) return;
@@ -76,18 +86,18 @@ export default function DashboardPage() {
     let mounted = true;
     const fetchAll = async () => {
       try {
-        const [liveRes, predRes, perfRes] = await Promise.all([
+        const [liveRes, histRes, perfRes] = await Promise.all([
           fetch(`${API_BASE}/api/live`),
-          fetch(`${API_BASE}/api/predictions`),
+          fetch(`${API_BASE}/api/history`),
           fetch(`${API_BASE}/api/performance`),
         ]);
         if (!mounted) return;
         const liveData = await liveRes.json();
-        const predData = await predRes.json();
+        const histData = await histRes.json();
         const perfData = await perfRes.json();
         setLive(liveData);
-        setPredictions(predData);
-        setPerformance({ totalPnl: perfData.totalPnl, settledTrades: perfData.settledTrades });
+        setHistory(histData);
+        setPerformance(perfData);
 
         if (liveData.marketState && priceSeries.current && strikeSeries.current) {
           const now = Math.floor(Date.now() / 1000) as UTCTimestamp;
@@ -120,7 +130,7 @@ export default function DashboardPage() {
     <main style={{ padding: 24, maxWidth: 1200, margin: "0 auto" }}>
       <h1 style={{ marginTop: 0 }}>Kalshi BTC 15m Prediction Engine</h1>
       <p style={{ color: "#94a3b8" }}>
-        Live Binance signal vs Kalshi KXBTC15M executable prices
+        Advisory signals only — records every guess and outcome for model refinement
       </p>
 
       <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr", gap: 16, marginBottom: 16 }}>
@@ -130,7 +140,7 @@ export default function DashboardPage() {
         </section>
 
         <section style={cardStyle}>
-          <h2 style={headingStyle}>Recommendation</h2>
+          <h2 style={headingStyle}>Signal</h2>
           {rec ? (
             <>
               <div style={{ fontSize: 32, fontWeight: 700, color: recColor }}>
@@ -176,37 +186,59 @@ export default function DashboardPage() {
         </section>
 
         <section style={cardStyle}>
-          <h2 style={headingStyle}>Paper Trading</h2>
-          <Metric label="Settled trades" value={String(performance?.settledTrades ?? 0)} />
+          <h2 style={headingStyle}>Track Record</h2>
+          <Metric label="Predictions logged" value={String(performance?.totalPredictions ?? 0)} />
+          <Metric label="Evaluated" value={String(performance?.evaluatedPredictions ?? 0)} />
+          <Metric label="HIGH/LOW signals" value={String(performance?.actionableSignals ?? 0)} />
           <Metric
-            label="Net P&L"
-            value={`$${(performance?.totalPnl ?? 0).toFixed(4)}`}
+            label="Signal accuracy"
+            value={
+              performance?.accuracy != null
+                ? `${(performance.accuracy * 100).toFixed(1)}%`
+                : "N/A"
+            }
+          />
+          <Metric
+            label="Avg Brier score"
+            value={
+              performance?.averageBrier != null
+                ? performance.averageBrier.toFixed(4)
+                : "N/A"
+            }
           />
         </section>
       </div>
 
       <section style={{ ...cardStyle, marginTop: 16 }}>
-        <h2 style={headingStyle}>Recent Predictions</h2>
+        <h2 style={headingStyle}>Prediction History</h2>
         <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
           <thead>
             <tr style={{ textAlign: "left", color: "#94a3b8" }}>
               <th>Time</th>
-              <th>Rec</th>
+              <th>Signal</th>
               <th>P(HIGH)</th>
-              <th>H edge</th>
-              <th>L edge</th>
               <th>Conf</th>
+              <th>Outcome</th>
+              <th>Correct?</th>
             </tr>
           </thead>
           <tbody>
-            {predictions.slice(0, 15).map((row) => (
+            {history.slice(0, 20).map((row) => (
               <tr key={row.id} style={{ borderTop: "1px solid #1f2937" }}>
                 <td>{new Date(row.timestamp).toLocaleTimeString()}</td>
                 <td>{row.recommendation}</td>
-                <td>{(row.adjustedHighProbability * 100).toFixed(1)}%</td>
-                <td>{row.highEdge.toFixed(3)}</td>
-                <td>{row.lowEdge.toFixed(3)}</td>
+                <td>{(row.predictedHigh * 100).toFixed(1)}%</td>
                 <td>{row.confidence.toFixed(2)}</td>
+                <td>{row.finalResult ?? "pending"}</td>
+                <td>
+                  {row.correct == null
+                    ? row.recommendation === "NO_BET"
+                      ? "—"
+                      : "pending"
+                    : row.correct
+                      ? "yes"
+                      : "no"}
+                </td>
               </tr>
             ))}
           </tbody>

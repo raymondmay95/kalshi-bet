@@ -72,7 +72,9 @@ export function makeDecision(
   warnings: string[];
 } {
   const reasons: string[] = [];
-  const warnings: string[] = ["Binance is not the authoritative settlement source"];
+  const warnings: string[] = [
+    "Price feed is not the authoritative Kalshi settlement source",
+  ];
 
   if (input.dataIsStale) {
     return noBet("Stale market data", warnings);

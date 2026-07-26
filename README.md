@@ -15,6 +15,29 @@ sudo systemctl enable --now kalshi-bet kalshi-bet-dashboard
 
 Dashboard: `http://<pi-ip>:3000` · API: `http://<pi-ip>:3001`
 
+## Advisory mode (no betting)
+
+This engine does **not** place bets. It emits advisory signals:
+
+- **HIGH** — conditions favor betting YES (BTC finishes above strike)
+- **LOW** — conditions favor betting NO
+- **NO_BET** — no clear edge after costs
+
+Every signal is logged to Postgres. When a 15-minute window settles, the engine records the actual outcome and whether each signal was correct.
+
+### Export history for model refinement
+
+```bash
+npm run export:history
+# writes CSV to data/prediction-history-<timestamp>.csv
+```
+
+### Update on Pi
+
+```bash
+bash deploy/pi/pull-restart.sh
+```
+
 ## Quick start (development)
 
 ```bash

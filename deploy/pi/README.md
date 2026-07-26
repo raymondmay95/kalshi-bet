@@ -48,8 +48,25 @@ journalctl -u kalshi-bet-dashboard -f
 ## Update after git pull
 
 ```bash
+bash deploy/pi/pull-restart.sh
+```
+
+This pulls, migrates the DB, rebuilds, and restarts both services.
+
+Legacy alias:
+
+```bash
 bash deploy/pi/update.sh
 ```
+
+## Export prediction history
+
+```bash
+cd ~/kalshi-bet
+npm run export:history
+```
+
+CSV columns include: signal, predicted probability, actual outcome, whether the signal was correct, and Brier score.
 
 ## Daily report
 

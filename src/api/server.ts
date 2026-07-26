@@ -8,7 +8,6 @@ import { getDb } from "../storage/database.js";
 import {
   marketIntervals,
   predictions,
-  paperTrades,
 } from "../storage/schema.js";
 
 export interface LiveState {
@@ -67,23 +66,89 @@ export function startApiServer(): void {
 
       if (req.url === "/api/performance") {
         const db = getDb();
-        const trades = await db
-          .select()
-          .from(paperTrades)
-          .orderBy(desc(paperTrades.createdAt))
-          .limit(200);
+        const rows = await db
+          .select({
+            prediction: predictions,
+            interval: marketIntervals,
+          })
+          .from(predictions)
+          .innerJoin(
+            marketIntervals,
+            eq(marketIntervals.id, predictions.marketIntervalId),
+          )
+          .orderBy(desc(predictions.timestamp))
+          .limit(500);
 
-        const settled = trades.filter((t) => t.profitLoss != null);
-        const totalPnl = settled.reduce((sum, t) => sum + (t.profitLoss ?? 0), 0);
+        const evaluated = rows.filter((r) => r.prediction.evaluatedAt != null);
+        const actionable = evaluated.filter(
+          (r) => r.prediction.recommendation !== "NO_BET",
+        );
+        const correct = actionable.filter(
+          (r) => r.prediction.recommendationCorrect === 1,
+        );
+        const avgBrier =
+          evaluated.length > 0
+            ? evaluated.reduce(
+                (sum, r) => sum + (r.prediction.brierScore ?? 0),
+                0,
+              ) / evaluated.length
+            : null;
 
         res.writeHead(200);
         res.end(
           JSON.stringify({
-            totalTrades: trades.length,
-            settledTrades: settled.length,
-            totalPnl,
-            trades,
+            totalPredictions: rows.length,
+            evaluatedPredictions: evaluated.length,
+            actionableSignals: actionable.length,
+            correctSignals: correct.length,
+            accuracy:
+              actionable.length > 0
+                ? correct.length / actionable.length
+                : null,
+            averageBrier: avgBrier,
           }),
+        );
+        return;
+      }
+
+      if (req.url === "/api/history") {
+        const db = getDb();
+        const rows = await db
+          .select({
+            prediction: predictions,
+            interval: marketIntervals,
+          })
+          .from(predictions)
+          .innerJoin(
+            marketIntervals,
+            eq(marketIntervals.id, predictions.marketIntervalId),
+          )
+          .orderBy(desc(predictions.timestamp))
+          .limit(100);
+
+        res.writeHead(200);
+        res.end(
+          JSON.stringify(
+            rows.map((row) => ({
+              id: row.prediction.id,
+              timestamp: row.prediction.timestamp,
+              ticker: row.interval.kalshiTicker,
+              threshold: row.interval.threshold,
+              secondsRemaining: row.prediction.secondsRemaining,
+              recommendation: row.prediction.recommendation,
+              predictedHigh: row.prediction.adjustedHighProbability,
+              confidence: row.prediction.confidence,
+              finalResult: row.prediction.finalResult ?? row.interval.finalResult,
+              actualHigh: row.prediction.actualHigh,
+              correct:
+                row.prediction.recommendationCorrect == null
+                  ? null
+                  : row.prediction.recommendationCorrect === 1,
+              brierScore: row.prediction.brierScore,
+              reasons: (row.prediction.reasonCodes as { reasons?: string[] } | null)
+                ?.reasons,
+            })),
+          ),
         );
         return;
       }

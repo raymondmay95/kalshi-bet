@@ -25,7 +25,7 @@ const envSchema = z.object({
   PAPER_TRADING: z
     .string()
     .transform((v) => v.toLowerCase() === "true")
-    .default("true"),
+    .default("false"),
   SLIPPAGE_CENTS: z.coerce.number().default(0.01),
   TAKER_FEE_COEFFICIENT: z.coerce.number().default(0.07),
   API_PORT: z.coerce.number().default(3001),

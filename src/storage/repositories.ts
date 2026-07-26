@@ -97,6 +97,7 @@ export class RecorderService {
         lowEdge: input.recommendation.lowEdge,
         recommendation: input.recommendation.recommendation,
         confidence: input.recommendation.confidence,
+        secondsRemaining: input.recommendation.secondsRemaining,
         reasonCodes: {
           reasons: input.recommendation.reasons,
           warnings: input.recommendation.warnings,

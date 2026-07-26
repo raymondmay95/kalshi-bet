@@ -1,6 +1,7 @@
 import { eq, isNull } from "drizzle-orm";
 import { logger } from "../config/logger.js";
 import { KalshiMarketService } from "../kalshi/market-discovery.js";
+import { evaluatePredictionsForInterval } from "./outcome-evaluator.js";
 import { calculateSettlementPnl } from "./paper-trader.js";
 import { getDb } from "../storage/database.js";
 import {
@@ -36,6 +37,8 @@ export class SettlementRecorder {
         .set({ finalResult: result })
         .where(eq(marketIntervals.id, interval.id));
 
+      const evaluated = await evaluatePredictionsForInterval(interval.id, result);
+
       const trades = await db
         .select({
           trade: paperTrades,
@@ -67,7 +70,7 @@ export class SettlementRecorder {
       }
 
       logger.info(
-        { ticker: interval.kalshiTicker, result, trades: trades.length },
+        { ticker: interval.kalshiTicker, result, evaluated, trades: trades.length },
         "Settled market interval",
       );
     }

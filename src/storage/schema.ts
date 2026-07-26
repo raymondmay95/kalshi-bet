@@ -53,6 +53,12 @@ export const predictions = pgTable("predictions", {
   recommendation: text("recommendation").notNull(),
   confidence: doublePrecision("confidence").notNull(),
   reasonCodes: jsonb("reason_codes"),
+  secondsRemaining: integer("seconds_remaining"),
+  finalResult: text("final_result"),
+  actualHigh: doublePrecision("actual_high"),
+  recommendationCorrect: integer("recommendation_correct"),
+  brierScore: doublePrecision("brier_score"),
+  evaluatedAt: timestamp("evaluated_at", { withTimezone: true }),
 });
 
 export const paperTrades = pgTable("paper_trades", {
