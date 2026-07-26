@@ -88,6 +88,7 @@ done
 
 log "Applying database schema..."
 npm run db:push || log "WARNING: db:push failed — you can retry with: npm run db:push"
+npm run db:migrate:sql || log "WARNING: SQL migration helper failed — schema may already be current"
 
 log "Installing systemd services..."
 bash deploy/pi/install-services.sh

@@ -22,9 +22,11 @@ export class PaperTrader {
 
   maybeCreateTrade(input: PaperTradeInput): PaperTradeResult | null {
     if (!this.enabled) return null;
-    if (input.recommendation.recommendation === "NO_BET") return null;
 
-    const side = input.recommendation.recommendation;
+    const trade = input.recommendation.tradeRecommendation;
+    if (trade === "NO_BET") return null;
+
+    const side = trade === "BET_HIGH" ? "HIGH" : "LOW";
     const entryPrice =
       side === "HIGH"
         ? input.recommendation.highAsk

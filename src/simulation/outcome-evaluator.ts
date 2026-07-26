@@ -6,12 +6,21 @@ export function evaluateRecommendation(
   recommendation: string,
   finalResult: "yes" | "no",
 ): boolean | null {
-  if (recommendation === "HIGH") {
+  if (recommendation === "HIGH" || recommendation === "BET_HIGH") {
     return finalResult === "yes";
   }
-  if (recommendation === "LOW") {
+  if (recommendation === "LOW" || recommendation === "BET_LOW") {
     return finalResult === "no";
   }
+  return null;
+}
+
+export function evaluateDirection(
+  predictedDirection: string | null | undefined,
+  finalResult: "yes" | "no",
+): boolean | null {
+  if (predictedDirection === "HIGH") return finalResult === "yes";
+  if (predictedDirection === "LOW") return finalResult === "no";
   return null;
 }
 
@@ -37,7 +46,11 @@ export async function evaluatePredictionsForInterval(
 
   for (const row of rows) {
     const recommendationCorrect = evaluateRecommendation(
-      row.recommendation,
+      row.tradeRecommendation ?? row.recommendation,
+      finalResult,
+    );
+    const directionCorrect = evaluateDirection(
+      row.predictedDirection,
       finalResult,
     );
 
@@ -48,7 +61,12 @@ export async function evaluatePredictionsForInterval(
         actualHigh,
         recommendationCorrect:
           recommendationCorrect == null ? null : recommendationCorrect ? 1 : 0,
-        brierScore: brierScore(row.adjustedHighProbability, actualHigh),
+        directionCorrect:
+          directionCorrect == null ? null : directionCorrect ? 1 : 0,
+        brierScore: brierScore(
+          row.calibratedHighProbability ?? row.adjustedHighProbability,
+          actualHigh,
+        ),
         evaluatedAt: new Date(),
       })
       .where(eq(predictions.id, row.id));

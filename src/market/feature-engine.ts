@@ -51,6 +51,18 @@ export class FeatureEngine {
     }
   }
 
+  getSettlementWindowPrices(
+    closeTimeMs: number,
+    windowSeconds: number,
+    now = Date.now(),
+  ): number[] {
+    return this.priceHistory.getSettlementWindowPrices(
+      closeTimeMs,
+      windowSeconds,
+      now,
+    );
+  }
+
   computeFeatures(input: {
     binance: BinanceMarketState;
     kalshi: KalshiMarketState;

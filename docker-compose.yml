@@ -6,6 +6,19 @@ services:
       POSTGRES_USER: kalshi
       POSTGRES_PASSWORD: kalshi
       POSTGRES_DB: kalshi_bet
+      # Pi-friendly shared_buffers default override via command
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - work_mem=4MB
+      - -c
+      - effective_cache_size=512MB
+      - -c
+      - max_connections=40
+      - -c
+      - checkpoint_completion_target=0.9
     ports:
       - "5432:5432"
     volumes:
@@ -15,6 +28,14 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    # Guidance for Raspberry Pi hosts (Compose applies when supported).
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+        reservations:
+          memory: 256M
+    restart: unless-stopped
 
 volumes:
   postgres_data:

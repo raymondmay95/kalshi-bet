@@ -44,6 +44,63 @@
   color: #cbd5e1;
 }
 
+.card-heading-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.card-heading-row .card-heading {
+  margin-bottom: 0;
+}
+
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+
+.status-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.status-live {
+  color: #22c55e;
+}
+
+.status-live .status-dot {
+  animation: status-pulse 1.8s ease-in-out infinite;
+}
+
+.status-stale,
+.status-waiting {
+  color: #f59e0b;
+}
+
+.status-offline {
+  color: #ef4444;
+}
+
+.status-connecting {
+  color: #94a3b8;
+}
+
+@keyframes status-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
 .history-section {
   margin-top: 16px;
 }

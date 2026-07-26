@@ -19,29 +19,33 @@ const baseInput = {
 };
 
 describe("decision engine", () => {
-  it("returns NO_BET for stale data when alwaysPickSide is false", () => {
+  it("returns NO_BET trade for stale data even when alwaysPickSide is true", () => {
     const decision = makeDecision(
       { ...baseInput, dataIsStale: true },
-      { ...testConfig(), alwaysPickSide: false },
+      { ...testConfig(), alwaysPickSide: true },
     );
-    expect(decision.recommendation).toBe("NO_BET");
+    expect(decision.tradeRecommendation).toBe("NO_BET");
+    expect(decision.predictedDirection).toBe("HIGH");
   });
 
-  it("returns NO_BET when seconds remaining below minimum and alwaysPickSide is false", () => {
+  it("returns NO_BET trade when seconds remaining below minimum", () => {
     const decision = makeDecision(
       { ...baseInput, secondsRemaining: 30 },
-      { ...testConfig(), alwaysPickSide: false },
+      { ...testConfig(), alwaysPickSide: true },
     );
-    expect(decision.recommendation).toBe("NO_BET");
+    expect(decision.tradeRecommendation).toBe("NO_BET");
+    expect(["HIGH", "LOW"]).toContain(decision.predictedDirection);
   });
 
-  it("returns HIGH when edge exceeds minimum", () => {
+  it("returns BET_HIGH when edge exceeds minimum", () => {
     const decision = makeDecision(baseInput, testConfig());
+    expect(decision.tradeRecommendation).toBe("BET_HIGH");
     expect(decision.recommendation).toBe("HIGH");
+    expect(decision.predictedDirection).toBe("HIGH");
     expect(decision.highEdge).toBeGreaterThan(0.07);
   });
 
-  it("returns LOW when low edge dominates", () => {
+  it("returns BET_LOW when low edge dominates", () => {
     const decision = makeDecision(
       {
         ...baseInput,
@@ -53,10 +57,12 @@ describe("decision engine", () => {
       },
       testConfig(),
     );
+    expect(decision.tradeRecommendation).toBe("BET_LOW");
     expect(decision.recommendation).toBe("LOW");
+    expect(decision.predictedDirection).toBe("LOW");
   });
 
-  it("picks HIGH or LOW when edge is insufficient (default always pick)", () => {
+  it("keeps a directional forecast when edge is insufficient but does not bet", () => {
     const decision = makeDecision(
       {
         ...baseInput,
@@ -66,20 +72,22 @@ describe("decision engine", () => {
       },
       testConfig(),
     );
-    expect(["HIGH", "LOW"]).toContain(decision.recommendation);
+    expect(decision.tradeRecommendation).toBe("NO_BET");
+    expect(["HIGH", "LOW"]).toContain(decision.predictedDirection);
   });
 
-  it("picks LOW when model favors below strike", () => {
+  it("alwaysPickSide never forces a trade recommendation", () => {
     const decision = makeDecision(
       {
         ...baseInput,
-        highProbability: 0.35,
+        highProbability: 0.55,
         yesAsk: 0.54,
         noAsk: 0.48,
       },
-      testConfig(),
+      { ...testConfig(), alwaysPickSide: true },
     );
-    expect(decision.recommendation).toBe("LOW");
+    expect(decision.tradeRecommendation).toBe("NO_BET");
+    expect(decision.predictedDirection).toBeTruthy();
   });
 });
 

@@ -40,6 +40,7 @@ docker compose up -d
 
 log "Applying database schema..."
 npm run db:push
+npm run db:migrate:sql || log "WARNING: SQL migration helper failed — schema may already be current"
 
 log "Building engine and dashboard..."
 npm run build

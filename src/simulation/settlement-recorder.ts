@@ -35,7 +35,10 @@ export class SettlementRecorder {
 
       await db
         .update(marketIntervals)
-        .set({ finalResult: result })
+        .set({
+          finalResult: result,
+          settlementTimestamp: new Date(),
+        })
         .where(eq(marketIntervals.id, interval.id));
 
       const evaluated = await evaluatePredictionsForInterval(interval.id, result);

@@ -2,7 +2,7 @@
 
 TypeScript engine that streams Binance BTCUSDT data, tracks the active Kalshi `KXBTC15M` market, estimates settlement probability using a drift-adjusted z-score model (time-scaled realized volatility plus a momentum/order-flow drift term), and emits `HIGH` / `LOW` / `NO_BET` recommendations with paper trading and a dashboard.
 
-The prediction is made **once, shortly after each 15-minute market opens, and locked** until the next interval. It is never revised mid-window, so the recorded history reflects genuine start-of-interval forecasts.
+The engine continuously updates an analytical probability (about every 1–2 seconds) and runs settlement-aware Monte Carlo simulations on a worker thread on a cadence that speeds up near expiry. Directional forecasts and trade recommendations are separate fields.
 
 ## Raspberry Pi (recommended for 24/7)
 
@@ -49,9 +49,10 @@ npm install
 # Start Postgres
 docker compose up -d
 
-# Copy env and push schema
+# Copy env and push schema (or apply SQL migration)
 cp .env.example .env
 npm run db:push
+# alternatively: npm run db:migrate:sql
 
 # Run engine (Binance + Kalshi + predictions + API on :3001)
 npm run dev
@@ -68,15 +69,26 @@ cd dashboard && npm install && cp .env.local.example .env.local && npm run dev
 
 ## Architecture
 
-- `src/binance/` — WebSocket feed (aggTrade, bookTicker, depth20, kline_1m) + REST backfill
+- `src/binance/` / `src/coinbase/` — spot WebSocket feeds + REST backfill
 - `src/kalshi/` — KXBTC15M discovery, order book polling, settlement capture
 - `src/market/` — rolling features and unified market state
-- `src/model/` — drift-adjusted z-score probability: `z = (P − K + μ·T_eff) / (σ·√T_eff)` with per-√second realized volatility, price-relative vol floor/cap, momentum + trade/book-imbalance drift (capped at 1.5σ), and log-odds shrinkage
-- `src/decision/` — Kalshi fee formula, EV, filters, recommendation output
-- `src/storage/` — Drizzle + Postgres snapshots, predictions, paper trades
+- `src/model/` — lightweight analytical drift-adjusted z-score probability (1–2s updates)
+- `src/prediction/` — Monte Carlo settlement-average engine in a persistent `worker_threads` pool, prediction scheduler, observability
+- `src/decision/` — separates `predictedDirection` (`HIGH`/`LOW`) from `tradeRecommendation` (`BET_HIGH`/`BET_LOW`/`NO_BET`)
+- `src/storage/` — Drizzle + Postgres snapshots, predictions, paper trades, model metrics, retention cleanup
 - `src/simulation/` — paper trader and settlement P&L
-- `src/api/` — REST API for dashboard (`/api/live`, `/api/predictions`, `/api/performance`)
+- `src/api/` — REST API + structured `/health` (`/api/live`, `/api/predictions`, `/api/performance`)
 - `dashboard/` — Next.js UI with live chart and recommendation card
+
+### Prediction pipeline (Pi-safe)
+
+1. **Collector** (main thread) — WebSocket/REST ingestion; never awaits Monte Carlo or sync DB writes.
+2. **Analytical predictor** — runs every ~2s or on material price/book/strike/time-threshold changes.
+3. **Monte Carlo worker** — persistent worker thread; at most one pending job per market (newest wins); stale results discarded.
+4. **Trainer** — adaptive Platt calibration + vol scale, refit after settlements (not continuous).
+5. **Retention** — scheduled cleanup of old 1s snapshots and evaluated predictions.
+
+`ALWAYS_PICK_SIDE` only influences the directional forecast path; it never bypasses trade safety checks.
 
 ## MVP ladder
 

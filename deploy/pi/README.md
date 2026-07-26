@@ -100,6 +100,14 @@ curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt-get install -y nodejs
 ```
 
+## Prediction pipeline notes (Pi)
+
+- Monte Carlo runs in a Node `worker_threads` pool inside the engine process (no extra container).
+- If the worker is unhealthy, analytical predictions continue; check `/health` → `worker.state`.
+- Snapshots are 1-second bars; retention defaults keep bars 90 days and evaluated predictions 365 days.
+- Tune `MONTE_CARLO_PATHS_*` downward (e.g. 1000/2000/4000) if the Pi thermally throttles.
+- Postgres Compose settings target ~768MB; raise only if the Pi has ≥8GB RAM.
+
 ## Troubleshooting
 
 **Binance blocked**

@@ -13,6 +13,7 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
+    "db:migrate:sql": "tsx src/scripts/apply-migration.ts",
     "report:daily": "tsx src/scripts/daily-report.ts",
     "export:history": "tsx src/scripts/export-history.ts",
     "dashboard:dev": "npm run dev --prefix dashboard",

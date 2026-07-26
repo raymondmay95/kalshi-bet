@@ -1,7 +1,8 @@
 import { desc, isNotNull, sql } from "drizzle-orm";
 import { logger } from "../config/logger.js";
 import { getDb } from "../storage/database.js";
-import { modelParams, predictions } from "../storage/schema.js";
+import { modelMetrics, modelParams, predictions } from "../storage/schema.js";
+import { BASELINE_MODEL } from "./model-types.js";
 import {
   DEFAULT_CONFIDENCE_MULTIPLIER,
   PROBABILITY_CAP,
@@ -139,6 +140,28 @@ export class AdaptiveModelService {
       calibration: calibrationResult.calibration,
       volScale: volScale ?? 1,
     };
+
+    const periodStart = settled[0]?.timestamp ?? new Date();
+    const periodEnd = settled[settled.length - 1]?.timestamp ?? new Date();
+    const brier =
+      typeof calibrationResult.metrics.fittedBrier === "number"
+        ? calibrationResult.metrics.fittedBrier
+        : null;
+
+    await db.insert(modelMetrics).values({
+      modelVersion: `${BASELINE_MODEL.name}@${BASELINE_MODEL.version}`,
+      evaluationPeriodStart: periodStart,
+      evaluationPeriodEnd: periodEnd,
+      brierScore: brier,
+      predictionCount: settled.length,
+      tradeCount: 0,
+      metricsJson: {
+        calibration: calibrationResult.metrics,
+        volScale: volScale ?? 1,
+        paramsId: inserted[0]!.id,
+      },
+    });
+
     logger.info(
       {
         paramsId: inserted[0]!.id,

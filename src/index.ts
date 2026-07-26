@@ -3,6 +3,7 @@ import { logger } from "./config/logger.js";
 import {
   buildBetRecommendation,
   makeDecision,
+  type BetRecommendation,
 } from "./decision/decision-engine.js";
 import { FeatureEngine } from "./market/feature-engine.js";
 import {
@@ -24,39 +25,52 @@ import {
 } from "./model/baseline-probability.js";
 import { estimateTrend } from "./model/trend-estimator.js";
 import { AdaptiveModelService } from "./model/adaptive-model.js";
-import type { BetRecommendation } from "./decision/decision-engine.js";
+import { BASELINE_MODEL } from "./model/model-types.js";
 import { startApiServer, updateLiveState } from "./api/server.js";
 import { closeDb, getDb } from "./storage/database.js";
 import { RecorderService } from "./storage/repositories.js";
+import { RetentionService } from "./storage/retention.js";
 import { PaperTrader, type PaperTradeResult } from "./simulation/paper-trader.js";
 import { SettlementRecorder } from "./simulation/settlement-recorder.js";
+import type { PredictionJobResult } from "./prediction/job-types.js";
+import {
+  noteMarketDataMessage,
+  noteReconnect,
+  getEngineMetrics,
+  updateWorkerMetrics,
+} from "./prediction/observability.js";
+import { PredictionScheduler } from "./prediction/scheduler.js";
 
 const PRINT_INTERVAL_MS = 5000;
 
-// The prediction is made once, at the start of each 15-minute interval,
-// and then locked until the next interval. Wait a short warmup after the
-// market opens so the Kalshi book has real quotes, but never wait longer
-// than the deadline.
-const LOCK_WARMUP_SECONDS = 15;
-const LOCK_DEADLINE_SECONDS = 90;
-
-interface LockedPrediction {
+interface LivePrediction {
   ticker: string;
   market: KalshiMarket;
   probability: ProbabilityOutput;
   recommendation: BetRecommendation;
-  paperTrade: PaperTradeResult | null;
+  monteCarloHighProbability: number | null;
+  estimatedSettlementPrice: number | null;
+  simulationPathCount: number | null;
+  simulationDurationMs: number | null;
+  inputVersion: number;
   modelParamsId: number | null;
-  persisted: boolean;
+  paperTrade: PaperTradeResult | null;
 }
 
 class PredictionEngine {
   private priceFeed: SpotFeedService = createPriceFeed({
-    onTrade: (trade) => this.featureEngine.onTrade(trade),
-    onState: (state) => this.featureEngine.onBinanceState(state),
+    onTrade: (trade) => {
+      noteMarketDataMessage();
+      this.featureEngine.onTrade(trade);
+    },
+    onState: (state) => {
+      noteMarketDataMessage();
+      this.featureEngine.onBinanceState(state);
+    },
     onCandle: (candle) =>
       this.featureEngine.onPrice(candle.timestamp, candle.close),
     onReconnect: () => {
+      noteReconnect();
       void backfillPriceCandles((candle) =>
         this.featureEngine.onPrice(candle.timestamp, candle.close),
       );
@@ -69,19 +83,27 @@ class PredictionEngine {
   private paperTrader = new PaperTrader();
   private settlementRecorder = new SettlementRecorder(this.kalshi);
   private adaptiveModel = new AdaptiveModelService();
+  private scheduler = new PredictionScheduler();
+  private retention = new RetentionService();
 
   private currentMarket: KalshiMarket | null = null;
   private openingBtcPrice: number | null = null;
-  private lockedPrediction: LockedPrediction | null = null;
-  private persistInFlight = false;
+  private livePrediction: LivePrediction | null = null;
+  private paperTradePlacedForTicker: string | null = null;
+  private lastPersistedAt = 0;
+  private lastPersistedTrade: string | null = null;
   private lastRecordedSecond: number | null = null;
   private printTimer: NodeJS.Timeout | null = null;
   private snapshotTimer: NodeJS.Timeout | null = null;
   private settlementTimer: NodeJS.Timeout | null = null;
+  private tickInFlight = false;
 
   async start(): Promise<void> {
     const env = getEnv();
-    logger.info({ priceFeed: env.PRICE_FEED }, "Starting Kalshi BTC prediction engine");
+    logger.info(
+      { priceFeed: env.PRICE_FEED, monteCarlo: env.MONTE_CARLO_ENABLED },
+      "Starting Kalshi BTC prediction engine",
+    );
 
     try {
       getDb();
@@ -89,8 +111,6 @@ class PredictionEngine {
       logger.warn({ error }, "Database unavailable; running without persistence");
     }
 
-    // Load previously fitted parameters and refit on current history.
-    // Falls back to fixed defaults when there is not enough data.
     await this.adaptiveModel.initialize();
 
     await backfillPriceCandles((candle) =>
@@ -98,22 +118,39 @@ class PredictionEngine {
     );
 
     this.priceFeed.start();
-    startApiServer();
+    startApiServer(() => getEngineMetrics());
+
+    this.scheduler.start({
+      onAnalyticalDue: () => {
+        void this.runAnalytical("schedule");
+      },
+      onMonteCarloResult: (result) => {
+        this.applyMonteCarloResult(result);
+      },
+    });
+
+    this.retention.start();
 
     await this.kalshi.start({
       onMarketChange: async (market) => {
         this.currentMarket = market;
         this.openingBtcPrice = this.priceFeed.getState().lastPrice || null;
-        this.lockedPrediction = null;
+        this.livePrediction = null;
+        this.paperTradePlacedForTicker = null;
+        this.lastPersistedTrade = null;
         this.lastRecordedSecond = null;
         try {
-          await this.recorder.ensureMarketInterval(market, this.openingBtcPrice ?? undefined);
+          await this.recorder.ensureMarketInterval(
+            market,
+            this.openingBtcPrice ?? undefined,
+          );
         } catch (error) {
           logger.error({ error }, "Failed to ensure market interval");
         }
       },
       onStateUpdate: () => {
-        void this.tick();
+        noteMarketDataMessage();
+        this.onMarketData();
       },
     });
 
@@ -131,15 +168,13 @@ class PredictionEngine {
     }, PRINT_INTERVAL_MS);
 
     this.snapshotTimer = setInterval(() => {
-      void this.recordSnapshot();
+      this.recordSnapshotQueued();
     }, env.SNAPSHOT_INTERVAL_MS);
 
     this.settlementTimer = setInterval(() => {
       void this.settlementRecorder
         .settleClosedIntervals()
         .then((settledCount) => {
-          // Every settlement adds a labeled example; refit so the next
-          // interval's prediction uses the newest parameters.
           if (settledCount > 0) {
             return this.adaptiveModel.refit();
           }
@@ -149,25 +184,248 @@ class PredictionEngine {
         });
     }, 30_000);
 
-    void this.tick();
+    this.onMarketData();
   }
 
   async stop(): Promise<void> {
     this.priceFeed.stop();
     this.kalshi.stop();
+    this.retention.stop();
+    await this.scheduler.stop();
     if (this.printTimer) clearInterval(this.printTimer);
     if (this.snapshotTimer) clearInterval(this.snapshotTimer);
     if (this.settlementTimer) clearInterval(this.settlementTimer);
     await closeDb();
   }
 
-  private async tick(): Promise<void> {
+  /** Hot path: never await DB or Monte Carlo. */
+  private onMarketData(): void {
+    if (this.tickInFlight) return;
+    this.tickInFlight = true;
+    try {
+      const ctx = this.collectContext();
+      if (!ctx) return;
+
+      this.scheduler.onMarketUpdate({
+        marketId: ctx.market.ticker,
+        currentPrice: ctx.features.currentPrice,
+        strike: ctx.threshold,
+        secondsRemaining: ctx.secondsRemaining,
+        volatility: ctx.volPerSqrtSecond,
+        drift: ctx.trend.driftDollarsPerSecond,
+        yesMid: (ctx.kalshiState.yesBid + ctx.kalshiState.yesAsk) / 2,
+        noMid: (ctx.kalshiState.noBid + ctx.kalshiState.noAsk) / 2,
+        observedSettlementPrices: ctx.observedSettlementPrices,
+      });
+
+      updateLiveState({
+        marketState: ctx.marketState,
+        recommendation: this.livePrediction?.recommendation ?? null,
+      });
+    } finally {
+      this.tickInFlight = false;
+    }
+  }
+
+  private runAnalytical(_reason: string): void {
+    const ctx = this.collectContext();
+    if (!ctx) return;
+
+    const adaptiveParams = this.adaptiveModel.getParams();
+    const probability = calculateBaselineProbability(
+      {
+        currentPrice: ctx.features.currentPrice,
+        threshold: ctx.threshold,
+        secondsRemaining: ctx.secondsRemaining,
+        volatilityPerSqrtSecond: ctx.volPerSqrtSecond,
+        driftPerSecond: ctx.trend.driftDollarsPerSecond,
+      },
+      { calibration: adaptiveParams.calibration },
+    );
+
+    // Prefer Monte Carlo probability when a fresh result exists for this market.
+    const mcProb =
+      this.livePrediction?.ticker === ctx.market.ticker
+        ? this.livePrediction.monteCarloHighProbability
+        : null;
+    const highProbability = mcProb ?? probability.adjustedHighProbability;
+
+    const decision = makeDecision({
+      highProbability,
+      confidence: probability.confidence,
+      yesBid: ctx.kalshiState.yesBid,
+      yesAsk: ctx.kalshiState.yesAsk,
+      noBid: ctx.kalshiState.noBid,
+      noAsk: ctx.kalshiState.noAsk,
+      yesLiquidity: ctx.kalshiState.yesLiquidity,
+      noLiquidity: ctx.kalshiState.noLiquidity,
+      secondsRemaining: ctx.secondsRemaining,
+      dataIsStale: ctx.dataIsStale,
+      distanceToThresholdBps: ctx.features.distanceToThresholdBps,
+      tradeImbalance: ctx.features.tradeImbalance,
+      momentum30s: ctx.features.returns["return_30000ms_bps"] ?? null,
+      momentum3m: ctx.features.returns["return_180000ms_bps"] ?? null,
+    });
+
+    const recommendation = buildBetRecommendation({
+      marketTicker: ctx.market.ticker,
+      timestamp: Date.now(),
+      threshold: ctx.threshold,
+      btcPrice: ctx.features.currentPrice,
+      secondsRemaining: ctx.secondsRemaining,
+      highProbability,
+      yesAsk: ctx.kalshiState.yesAsk,
+      noAsk: ctx.kalshiState.noAsk,
+      confidence: probability.confidence,
+      decision,
+    });
+
+    let paperTrade: PaperTradeResult | null = null;
+    if (
+      this.paperTradePlacedForTicker !== ctx.market.ticker &&
+      recommendation.tradeRecommendation !== "NO_BET"
+    ) {
+      paperTrade = this.paperTrader.maybeCreateTrade({ recommendation });
+      if (paperTrade) {
+        this.paperTradePlacedForTicker = ctx.market.ticker;
+      }
+    }
+
+    this.livePrediction = {
+      ticker: ctx.market.ticker,
+      market: ctx.market,
+      probability,
+      recommendation,
+      monteCarloHighProbability: mcProb,
+      estimatedSettlementPrice:
+        this.livePrediction?.ticker === ctx.market.ticker
+          ? this.livePrediction.estimatedSettlementPrice
+          : null,
+      simulationPathCount:
+        this.livePrediction?.ticker === ctx.market.ticker
+          ? this.livePrediction.simulationPathCount
+          : null,
+      simulationDurationMs:
+        this.livePrediction?.ticker === ctx.market.ticker
+          ? this.livePrediction.simulationDurationMs
+          : null,
+      inputVersion: this.scheduler.getLatestInputVersion(),
+      modelParamsId: adaptiveParams.paramsId,
+      paperTrade,
+    };
+
+    updateLiveState({
+      marketState: ctx.marketState,
+      recommendation,
+    });
+
+    this.maybePersist(this.livePrediction, paperTrade);
+
+    logger.debug(
+      {
+        ticker: ctx.market.ticker,
+        direction: recommendation.predictedDirection,
+        trade: recommendation.tradeRecommendation,
+        highProbability: highProbability.toFixed(3),
+        mc: mcProb?.toFixed(3) ?? null,
+        secondsRemaining: ctx.secondsRemaining,
+      },
+      "Analytical prediction updated",
+    );
+  }
+
+  private applyMonteCarloResult(result: PredictionJobResult): void {
+    if (result.stale) return;
+
+    if (this.livePrediction && this.livePrediction.ticker === result.marketId) {
+      this.livePrediction = {
+        ...this.livePrediction,
+        monteCarloHighProbability: result.highProbability,
+        estimatedSettlementPrice: result.estimatedSettlementAverage,
+        simulationPathCount: result.pathCount,
+        simulationDurationMs: result.durationMs,
+        inputVersion: result.inputVersion,
+      };
+    } else if (this.livePrediction) {
+      this.livePrediction = {
+        ...this.livePrediction,
+        monteCarloHighProbability: result.highProbability,
+        estimatedSettlementPrice: result.estimatedSettlementAverage,
+        simulationPathCount: result.pathCount,
+        simulationDurationMs: result.durationMs,
+        inputVersion: result.inputVersion,
+      };
+    }
+
+    // Recompute decision with MC probability on the main thread (cheap).
+    this.runAnalytical("monte_carlo");
+
+    const m = this.scheduler.getPool().getMetrics();
+    updateWorkerMetrics({
+      state: m.state,
+      restartCount: m.restartCount,
+      pendingJobs: m.pendingJobs,
+      completedJobs: m.completedJobs,
+      timedOutJobs: m.timedOutJobs,
+      lastDurationMs: m.lastDurationMs,
+      lastError: m.lastError,
+    });
+  }
+
+  private maybePersist(
+    live: LivePrediction,
+    newPaperTrade: PaperTradeResult | null,
+  ): void {
+    const env = getEnv();
+    const now = Date.now();
+    const tradeChanged =
+      live.recommendation.tradeRecommendation !== this.lastPersistedTrade;
+    const due = now - this.lastPersistedAt >= env.PREDICTION_PERSIST_INTERVAL_MS;
+
+    if (!due && !tradeChanged && !newPaperTrade) return;
+
+    this.lastPersistedAt = now;
+    this.lastPersistedTrade = live.recommendation.tradeRecommendation;
+
+    const modelVersion = live.monteCarloHighProbability != null
+      ? `${BASELINE_MODEL.name}@${BASELINE_MODEL.version}+mc`
+      : `${BASELINE_MODEL.name}@${BASELINE_MODEL.version}`;
+
+    this.recorder.enqueuePrediction({
+      market: live.market,
+      openingBtcPrice: this.openingBtcPrice ?? undefined,
+      probability: live.probability,
+      recommendation: live.recommendation,
+      paperTrade: newPaperTrade,
+      modelParamsId: live.modelParamsId,
+      inputVersion: live.inputVersion,
+      inputTimestamp: live.recommendation.timestamp,
+      monteCarloHighProbability: live.monteCarloHighProbability,
+      estimatedSettlementPrice: live.estimatedSettlementPrice,
+      simulationPathCount: live.simulationPathCount,
+      simulationDurationMs: live.simulationDurationMs,
+      modelVersion,
+    });
+  }
+
+  private collectContext(): {
+    market: KalshiMarket;
+    kalshiState: NonNullable<ReturnType<KalshiMarketService["getState"]>>;
+    features: ReturnType<FeatureEngine["computeFeatures"]>;
+    threshold: number;
+    secondsRemaining: number;
+    dataIsStale: boolean;
+    volPerSqrtSecond: number;
+    trend: ReturnType<typeof estimateTrend>;
+    observedSettlementPrices: number[];
+    marketState: ReturnType<typeof buildPredictionMarketState>;
+  } | null {
     const market = this.kalshi.getCurrentMarket();
     const kalshiState = this.kalshi.getState();
     const spotState = this.priceFeed.getState();
 
     if (!market || !kalshiState || spotState.lastPrice <= 0) {
-      return;
+      return null;
     }
 
     const env = getEnv();
@@ -184,74 +442,7 @@ class PredictionEngine {
       secondsRemaining,
     });
 
-    const marketState = buildPredictionMarketState({
-      kalshiTicker: market.ticker,
-      threshold,
-      intervalStart: market.openTime.getTime(),
-      intervalEnd: market.closeTime.getTime(),
-      btcPrice: features.currentPrice,
-      btcBid: spotState.bid,
-      btcAsk: spotState.ask,
-      kalshiYesBid: kalshiState.yesBid,
-      kalshiYesAsk: kalshiState.yesAsk,
-      kalshiNoBid: kalshiState.noBid,
-      kalshiNoAsk: kalshiState.noAsk,
-      settlementSource: market.settlementSource,
-    });
-
-    // One prediction per interval: lock it near the open and never revise.
-    if (this.lockedPrediction?.ticker !== market.ticker) {
-      const elapsedSeconds =
-        (Date.now() - market.openTime.getTime()) / 1000;
-      const readyToLock =
-        !dataIsStale &&
-        kalshiState.yesAsk > 0 &&
-        elapsedSeconds >= LOCK_WARMUP_SECONDS;
-      const mustLock = elapsedSeconds >= LOCK_DEADLINE_SECONDS;
-
-      if (readyToLock || mustLock) {
-        this.lockPrediction({
-          market,
-          kalshiState,
-          features,
-          secondsRemaining,
-          dataIsStale,
-        });
-      }
-    }
-
-    // Persist (or re-try persisting) the locked prediction and its paper
-    // trade. The locked values are never recomputed; only the write is
-    // retried, so the stored history always matches what was shown live.
-    if (
-      this.lockedPrediction?.ticker === market.ticker &&
-      !this.lockedPrediction.persisted
-    ) {
-      await this.persistLockedPrediction(this.lockedPrediction);
-    }
-
-    updateLiveState({
-      marketState,
-      recommendation:
-        this.lockedPrediction?.ticker === market.ticker
-          ? this.lockedPrediction.recommendation
-          : null,
-    });
-  }
-
-  private lockPrediction(input: {
-    market: KalshiMarket;
-    kalshiState: NonNullable<ReturnType<KalshiMarketService["getState"]>>;
-    features: ReturnType<FeatureEngine["computeFeatures"]>;
-    secondsRemaining: number;
-    dataIsStale: boolean;
-  }): void {
-    const { market, kalshiState, features, secondsRemaining, dataIsStale } =
-      input;
-    const threshold = market.floorStrike ?? 0;
-
     const adaptiveParams = this.adaptiveModel.getParams();
-
     const volPerSqrtSecond =
       estimateVolatilityPerSqrtSecond(
         blendVolatilityPerSqrtSecond([
@@ -269,111 +460,38 @@ class PredictionEngine {
       bookImbalance: features.bookImbalance,
     });
 
-    const probability = calculateBaselineProbability(
-      {
-        currentPrice: features.currentPrice,
-        threshold,
-        secondsRemaining,
-        volatilityPerSqrtSecond: volPerSqrtSecond,
-        driftPerSecond: trend.driftDollarsPerSecond,
-      },
-      { calibration: adaptiveParams.calibration },
+    const observedSettlementPrices = this.featureEngine.getSettlementWindowPrices(
+      market.closeTime.getTime(),
+      env.MONTE_CARLO_SETTLEMENT_WINDOW_SECONDS,
     );
 
-    const decision = makeDecision({
-      highProbability: probability.adjustedHighProbability,
-      confidence: probability.confidence,
-      yesBid: kalshiState.yesBid,
-      yesAsk: kalshiState.yesAsk,
-      noBid: kalshiState.noBid,
-      noAsk: kalshiState.noAsk,
-      yesLiquidity: kalshiState.yesLiquidity,
-      noLiquidity: kalshiState.noLiquidity,
+    const marketState = buildPredictionMarketState({
+      kalshiTicker: market.ticker,
+      threshold,
+      intervalStart: market.openTime.getTime(),
+      intervalEnd: market.closeTime.getTime(),
+      btcPrice: features.currentPrice,
+      btcBid: spotState.bid,
+      btcAsk: spotState.ask,
+      kalshiYesBid: kalshiState.yesBid,
+      kalshiYesAsk: kalshiState.yesAsk,
+      kalshiNoBid: kalshiState.noBid,
+      kalshiNoAsk: kalshiState.noAsk,
+      settlementSource: market.settlementSource,
+    });
+
+    return {
+      market,
+      kalshiState,
+      features,
+      threshold,
       secondsRemaining,
       dataIsStale,
-      distanceToThresholdBps: features.distanceToThresholdBps,
-      tradeImbalance: features.tradeImbalance,
-      momentum30s: features.returns["return_30000ms_bps"] ?? null,
-      momentum3m: features.returns["return_180000ms_bps"] ?? null,
-    });
-
-    const recommendation = buildBetRecommendation({
-      marketTicker: market.ticker,
-      timestamp: Date.now(),
-      threshold,
-      btcPrice: features.currentPrice,
-      secondsRemaining,
-      highProbability: probability.adjustedHighProbability,
-      yesAsk: kalshiState.yesAsk,
-      noAsk: kalshiState.noAsk,
-      confidence: probability.confidence,
-      decision,
-    });
-
-    // The paper trade is derived from the same locked recommendation at
-    // the same moment, so the bet always mirrors the prediction.
-    const paperTrade = this.paperTrader.maybeCreateTrade({ recommendation });
-
-    this.lockedPrediction = {
-      ticker: market.ticker,
-      market,
-      probability,
-      recommendation,
-      paperTrade,
-      modelParamsId: adaptiveParams.paramsId,
-      persisted: false,
+      volPerSqrtSecond,
+      trend,
+      observedSettlementPrices,
+      marketState,
     };
-
-    logger.info(
-      {
-        ticker: market.ticker,
-        recommendation: recommendation.recommendation,
-        highProbability: recommendation.highProbability.toFixed(3),
-        highEdge: recommendation.highEdge.toFixed(3),
-        lowEdge: recommendation.lowEdge.toFixed(3),
-        driftBpsPerSecond: trend.driftBpsPerSecond.toFixed(4),
-        remainingStdDev: probability.remainingStdDev.toFixed(2),
-        paperTradeSide: paperTrade?.side ?? null,
-        modelParamsId: adaptiveParams.paramsId,
-        volScale: adaptiveParams.volScale,
-        calibrated: adaptiveParams.calibration != null,
-        secondsRemaining,
-      },
-      "Prediction locked for interval",
-    );
-  }
-
-  private async persistLockedPrediction(
-    locked: LockedPrediction,
-  ): Promise<void> {
-    if (this.persistInFlight) return;
-    this.persistInFlight = true;
-    try {
-      const predictionId = await this.recorder.recordPredictionAndTrade({
-        market: locked.market,
-        openingBtcPrice: this.openingBtcPrice ?? undefined,
-        probability: locked.probability,
-        recommendation: locked.recommendation,
-        paperTrade: locked.paperTrade,
-        modelParamsId: locked.modelParamsId,
-      });
-      locked.persisted = true;
-      logger.info(
-        {
-          predictionId,
-          ticker: locked.ticker,
-          paperTradeSide: locked.paperTrade?.side ?? null,
-        },
-        "Prediction and paper trade persisted",
-      );
-    } catch (error) {
-      logger.error(
-        { error, ticker: locked.ticker },
-        "Failed to persist locked prediction; will retry",
-      );
-    } finally {
-      this.persistInFlight = false;
-    }
   }
 
   private async printSnapshot(): Promise<void> {
@@ -401,61 +519,38 @@ class PredictionEngine {
       settlementSource: market.settlementSource,
     });
 
-    logger.info(formatSnapshotLine(state));
+    const live = this.livePrediction;
+    logger.info(
+      {
+        line: formatSnapshotLine(state),
+        direction: live?.recommendation.predictedDirection ?? null,
+        trade: live?.recommendation.tradeRecommendation ?? null,
+        mc: live?.monteCarloHighProbability ?? null,
+        worker: this.scheduler.getPool().getMetrics().state,
+      },
+      "Snapshot",
+    );
   }
 
-  private async recordSnapshot(): Promise<void> {
-    const market = this.kalshi.getCurrentMarket();
-    const kalshiState = this.kalshi.getState();
-    const spotState = this.priceFeed.getState();
+  private recordSnapshotQueued(): void {
+    const ctx = this.collectContext();
+    if (!ctx) return;
 
-    if (!market || !kalshiState || spotState.lastPrice <= 0) {
+    if (this.lastRecordedSecond === ctx.secondsRemaining) {
       return;
     }
+    this.lastRecordedSecond = ctx.secondsRemaining;
 
-    const secondsRemaining = this.kalshi.getSecondsRemaining();
-    if (this.lastRecordedSecond === secondsRemaining) {
-      return;
-    }
-    this.lastRecordedSecond = secondsRemaining;
-
-    const threshold = market.floorStrike ?? 0;
-    const features = this.featureEngine.computeFeatures({
-      binance: spotState,
-      kalshi: kalshiState,
-      threshold,
-      secondsRemaining,
+    this.recorder.enqueueSnapshot({
+      state: ctx.marketState,
+      features: ctx.features,
+      kalshiFeatures: {
+        yesSpread: ctx.kalshiState.yesSpread,
+        noSpread: ctx.kalshiState.noSpread,
+        yesLiquidity: ctx.kalshiState.yesLiquidity,
+        noLiquidity: ctx.kalshiState.noLiquidity,
+      },
     });
-
-    const state = buildPredictionMarketState({
-      kalshiTicker: market.ticker,
-      threshold,
-      intervalStart: market.openTime.getTime(),
-      intervalEnd: market.closeTime.getTime(),
-      btcPrice: features.currentPrice,
-      btcBid: spotState.bid,
-      btcAsk: spotState.ask,
-      kalshiYesBid: kalshiState.yesBid,
-      kalshiYesAsk: kalshiState.yesAsk,
-      kalshiNoBid: kalshiState.noBid,
-      kalshiNoAsk: kalshiState.noAsk,
-      settlementSource: market.settlementSource,
-    });
-
-    try {
-      await this.recorder.recordSnapshot({
-        state,
-        features,
-        kalshiFeatures: {
-          yesSpread: kalshiState.yesSpread,
-          noSpread: kalshiState.noSpread,
-          yesLiquidity: kalshiState.yesLiquidity,
-          noLiquidity: kalshiState.noLiquidity,
-        },
-      });
-    } catch (error) {
-      logger.error({ error }, "Failed to record snapshot");
-    }
   }
 }
 

@@ -27,6 +27,7 @@ interface LiveState {
     reasons: string[];
     warnings: string[];
   } | null;
+  updatedAt: number;
 }
 
 interface PerformanceSummary {
@@ -57,6 +58,7 @@ export default function DashboardPage() {
   const [live, setLive] = useState<LiveState | null>(null);
   const [history, setHistory] = useState<HistoryRow[]>([]);
   const [performance, setPerformance] = useState<PerformanceSummary | null>(null);
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
 
   useEffect(() => {
     if (!chartRef.current) return;
@@ -91,6 +93,9 @@ export default function DashboardPage() {
           fetch(`${API_BASE}/api/history`),
           fetch(`${API_BASE}/api/performance`),
         ]);
+        if (!liveRes.ok || !histRes.ok || !perfRes.ok) {
+          throw new Error("Dashboard API request failed");
+        }
         if (!mounted) return;
         const liveData = await liveRes.json();
         const histData = await histRes.json();
@@ -98,6 +103,7 @@ export default function DashboardPage() {
         setLive(liveData);
         setHistory(histData);
         setPerformance(perfData);
+        setApiOnline(true);
 
         if (liveData.marketState && priceSeries.current && strikeSeries.current) {
           const now = Math.floor(Date.now() / 1000) as UTCTimestamp;
@@ -105,7 +111,7 @@ export default function DashboardPage() {
           strikeSeries.current.update({ time: now, value: liveData.marketState.threshold });
         }
       } catch {
-        // API may be offline during local dev
+        if (mounted) setApiOnline(false);
       }
     };
 
@@ -119,6 +125,17 @@ export default function DashboardPage() {
 
   const rec = live?.recommendation;
   const market = live?.marketState;
+  const signalStatus =
+    apiOnline === false
+      ? "OFFLINE"
+      : apiOnline == null
+        ? "CONNECTING"
+        : !rec || !market
+          ? "WAITING"
+          : Date.now() - live.updatedAt > 10_000
+            ? "STALE"
+            : "LIVE";
+  const signalStatusClass = signalStatus.toLowerCase();
   const recColor =
     rec?.recommendation === "HIGH"
       ? "#22c55e"
@@ -140,7 +157,13 @@ export default function DashboardPage() {
         </section>
 
         <section className="card">
-          <h2 className="card-heading">Signal</h2>
+          <div className="card-heading-row">
+            <h2 className="card-heading">Signal</h2>
+            <span className={`status-badge status-${signalStatusClass}`}>
+              <span className="status-dot" aria-hidden="true" />
+              {signalStatus}
+            </span>
+          </div>
           {rec ? (
             <>
               <div className="signal-value" style={{ color: recColor }}>

@@ -1,6 +1,13 @@
 import { getEnv } from "../config/environment.js";
 import { calculateExpectedValue } from "./fees.js";
 
+/** Directional forecast — always HIGH or LOW. */
+export type PredictedDirection = "HIGH" | "LOW";
+
+/** Betting action — independent of the directional forecast. */
+export type TradeRecommendation = "BET_HIGH" | "BET_LOW" | "NO_BET";
+
+/** Legacy recommendation field for DB / paper-trade compatibility. */
 export type Recommendation = "HIGH" | "LOW" | "NO_BET";
 
 export interface DecisionInput {
@@ -26,6 +33,9 @@ export interface BetRecommendation {
   threshold: number;
   btcPrice: number;
   secondsRemaining: number;
+  predictedDirection: PredictedDirection;
+  tradeRecommendation: TradeRecommendation;
+  /** Legacy: HIGH/LOW/NO_BET mapped from tradeRecommendation. */
   recommendation: Recommendation;
   highProbability: number;
   lowProbability: number;
@@ -46,6 +56,10 @@ export interface DecisionConfig {
   minimumLiquidity: number;
   feeCoefficient: number;
   slippage: number;
+  /**
+   * When true, still always produces a predictedDirection (always does).
+   * Must NOT bypass trade-recommendation safety checks.
+   */
   alwaysPickSide: boolean;
 }
 
@@ -67,16 +81,24 @@ export function pickDirection(input: {
   highProbability: number;
   highEdge: number;
   lowEdge: number;
-}): "HIGH" | "LOW" {
+}): PredictedDirection {
   if (input.highEdge > input.lowEdge) return "HIGH";
   if (input.lowEdge > input.highEdge) return "LOW";
   return input.highProbability >= 0.5 ? "HIGH" : "LOW";
+}
+
+export function tradeToLegacy(trade: TradeRecommendation): Recommendation {
+  if (trade === "BET_HIGH") return "HIGH";
+  if (trade === "BET_LOW") return "LOW";
+  return "NO_BET";
 }
 
 export function makeDecision(
   input: DecisionInput,
   config: DecisionConfig = getDefaultDecisionConfig(),
 ): {
+  predictedDirection: PredictedDirection;
+  tradeRecommendation: TradeRecommendation;
   recommendation: Recommendation;
   highEdge: number;
   lowEdge: number;
@@ -96,24 +118,35 @@ export function makeDecision(
     slippage: config.slippage,
   });
 
+  const predictedDirection = pickDirection({
+    highProbability: input.highProbability,
+    highEdge: ev.highEdge,
+    lowEdge: ev.lowEdge,
+  });
+
+  // ALWAYS_PICK_SIDE only annotates the forecast path; it never forces a trade.
+  if (config.alwaysPickSide) {
+    reasons.push(
+      `Directional forecast: ${predictedDirection} (${(input.highProbability * 100).toFixed(1)}% HIGH)`,
+    );
+  }
+
   if (input.dataIsStale) {
     warnings.push("Market data may be stale");
-    if (!config.alwaysPickSide) {
-      return noBet("Stale market data", warnings, ev);
-    }
+    return noBet("Stale market data", warnings, ev, predictedDirection, reasons);
   }
 
   if (input.secondsRemaining < config.minimumSecondsRemaining) {
     warnings.push(
       `Only ${input.secondsRemaining}s remaining — late-window signal`,
     );
-    if (!config.alwaysPickSide) {
-      return noBet(
-        `Only ${input.secondsRemaining}s remaining (minimum ${config.minimumSecondsRemaining}s)`,
-        warnings,
-        ev,
-      );
-    }
+    return noBet(
+      `Only ${input.secondsRemaining}s remaining (minimum ${config.minimumSecondsRemaining}s)`,
+      warnings,
+      ev,
+      predictedDirection,
+      reasons,
+    );
   }
 
   const yesSpread = Math.max(0, input.yesAsk - input.yesBid);
@@ -122,9 +155,13 @@ export function makeDecision(
 
   if (maxSpread > config.maximumSpread) {
     warnings.push(`Wide spread (${maxSpread.toFixed(2)}) — lower execution quality`);
-    if (!config.alwaysPickSide) {
-      return noBet(`Spread ${maxSpread.toFixed(2)} exceeds maximum`, warnings, ev);
-    }
+    return noBet(
+      `Spread ${maxSpread.toFixed(2)} exceeds maximum`,
+      warnings,
+      ev,
+      predictedDirection,
+      reasons,
+    );
   }
 
   if (
@@ -132,32 +169,35 @@ export function makeDecision(
     input.noLiquidity < config.minimumLiquidity
   ) {
     warnings.push("Low Kalshi liquidity");
-    if (!config.alwaysPickSide) {
-      return noBet("Insufficient Kalshi liquidity", warnings, ev);
-    }
+    return noBet(
+      "Insufficient Kalshi liquidity",
+      warnings,
+      ev,
+      predictedDirection,
+      reasons,
+    );
   }
 
   if (input.confidence < config.minimumConfidence) {
     warnings.push(
       `Model confidence ${input.confidence.toFixed(2)} below usual threshold`,
     );
-    if (!config.alwaysPickSide) {
-      return noBet(
-        `Confidence ${input.confidence.toFixed(2)} below minimum`,
-        warnings,
-        ev,
-      );
-    }
+    return noBet(
+      `Confidence ${input.confidence.toFixed(2)} below minimum`,
+      warnings,
+      ev,
+      predictedDirection,
+      reasons,
+    );
   }
 
   appendMarketReasons(input, reasons);
 
-  if (
-    ev.highEdge >= config.minimumEdge &&
-    ev.highEdge > ev.lowEdge
-  ) {
+  if (ev.highEdge >= config.minimumEdge && ev.highEdge > ev.lowEdge) {
     reasons.push("Estimated HIGH probability exceeds effective contract cost");
     return {
+      predictedDirection,
+      tradeRecommendation: "BET_HIGH",
       recommendation: "HIGH",
       highEdge: ev.highEdge,
       lowEdge: ev.lowEdge,
@@ -166,34 +206,12 @@ export function makeDecision(
     };
   }
 
-  if (
-    ev.lowEdge >= config.minimumEdge &&
-    ev.lowEdge > ev.highEdge
-  ) {
+  if (ev.lowEdge >= config.minimumEdge && ev.lowEdge > ev.highEdge) {
     reasons.push("Estimated LOW probability exceeds effective contract cost");
     return {
+      predictedDirection,
+      tradeRecommendation: "BET_LOW",
       recommendation: "LOW",
-      highEdge: ev.highEdge,
-      lowEdge: ev.lowEdge,
-      reasons,
-      warnings,
-    };
-  }
-
-  const direction = pickDirection({
-    highProbability: input.highProbability,
-    highEdge: ev.highEdge,
-    lowEdge: ev.lowEdge,
-  });
-
-  if (config.alwaysPickSide) {
-    reasons.push(
-      direction === "HIGH"
-        ? `Best estimate: ${(input.highProbability * 100).toFixed(1)}% chance above strike (HIGH edge ${ev.highEdge.toFixed(3)})`
-        : `Best estimate: ${((1 - input.highProbability) * 100).toFixed(1)}% chance below strike (LOW edge ${ev.lowEdge.toFixed(3)})`,
-    );
-    return {
-      recommendation: direction,
       highEdge: ev.highEdge,
       lowEdge: ev.lowEdge,
       reasons,
@@ -203,6 +221,8 @@ export function makeDecision(
 
   reasons.push("No side offers sufficient edge after costs");
   return {
+    predictedDirection,
+    tradeRecommendation: "NO_BET",
     recommendation: "NO_BET",
     highEdge: ev.highEdge,
     lowEdge: ev.lowEdge,
@@ -239,7 +259,11 @@ function noBet(
   reason: string,
   warnings: string[],
   ev: { highEdge: number; lowEdge: number },
+  predictedDirection: PredictedDirection,
+  priorReasons: string[],
 ): {
+  predictedDirection: PredictedDirection;
+  tradeRecommendation: TradeRecommendation;
   recommendation: Recommendation;
   highEdge: number;
   lowEdge: number;
@@ -247,10 +271,12 @@ function noBet(
   warnings: string[];
 } {
   return {
+    predictedDirection,
+    tradeRecommendation: "NO_BET",
     recommendation: "NO_BET",
     highEdge: ev.highEdge,
     lowEdge: ev.lowEdge,
-    reasons: [reason],
+    reasons: [...priorReasons, reason],
     warnings,
   };
 }
@@ -273,6 +299,8 @@ export function buildBetRecommendation(input: {
     threshold: input.threshold,
     btcPrice: input.btcPrice,
     secondsRemaining: input.secondsRemaining,
+    predictedDirection: input.decision.predictedDirection,
+    tradeRecommendation: input.decision.tradeRecommendation,
     recommendation: input.decision.recommendation,
     highProbability: input.highProbability,
     lowProbability: 1 - input.highProbability,

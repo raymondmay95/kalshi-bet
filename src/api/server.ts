@@ -4,6 +4,7 @@ import { getEnv } from "../config/environment.js";
 import { logger } from "../config/logger.js";
 import type { BetRecommendation } from "../decision/decision-engine.js";
 import type { PredictionMarketState } from "../market/market-state.js";
+import type { EngineMetrics } from "../prediction/observability.js";
 import { getDb } from "../storage/database.js";
 import {
   marketIntervals,
@@ -34,15 +35,51 @@ export function getLiveState(): LiveState {
   return liveState;
 }
 
-export function startApiServer(): void {
+export function startApiServer(
+  getMetrics?: () => EngineMetrics,
+): void {
   const server = createServer(async (req, res) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Content-Type", "application/json");
 
     try {
       if (req.url === "/health") {
-        res.writeHead(200);
-        res.end(JSON.stringify({ ok: true }));
+        const metrics = getMetrics?.();
+        const workerState = metrics?.worker.state ?? "unknown";
+        const marketFresh =
+          metrics?.lastMarketDataAt != null &&
+          Date.now() - metrics.lastMarketDataAt < 15_000;
+
+        const ok =
+          marketFresh ||
+          metrics == null ||
+          metrics.marketDataMessages === 0;
+
+        res.writeHead(ok ? 200 : 503);
+        res.end(
+          JSON.stringify({
+            ok,
+            collector: {
+              marketDataMessages: metrics?.marketDataMessages ?? 0,
+              lastMarketDataAt: metrics?.lastMarketDataAt ?? null,
+              reconnectCount: metrics?.reconnectCount ?? 0,
+              droppedMarketUpdates: metrics?.droppedMarketUpdates ?? 0,
+            },
+            predictor: {
+              analyticalPredictionCount:
+                metrics?.analyticalPredictionCount ?? 0,
+              lastAnalyticalAt: metrics?.lastAnalyticalAt ?? null,
+              lastMonteCarloAt: metrics?.lastMonteCarloAt ?? null,
+              monteCarloRequestCount: metrics?.monteCarloRequestCount ?? 0,
+              staleJobsDiscarded: metrics?.staleJobsDiscarded ?? 0,
+            },
+            worker: metrics?.worker ?? { state: workerState },
+            database: {
+              lastInsertLatencyMs: metrics?.dbInsertLatencyMs ?? null,
+              errors: metrics?.dbErrors ?? 0,
+            },
+          }),
+        );
         return;
       }
 
@@ -81,10 +118,18 @@ export function startApiServer(): void {
 
         const evaluated = rows.filter((r) => r.prediction.evaluatedAt != null);
         const actionable = evaluated.filter(
-          (r) => r.prediction.recommendation !== "NO_BET",
+          (r) =>
+            (r.prediction.tradeRecommendation ?? r.prediction.recommendation) !==
+            "NO_BET",
         );
         const correct = actionable.filter(
           (r) => r.prediction.recommendationCorrect === 1,
+        );
+        const directionEvaluated = evaluated.filter(
+          (r) => r.prediction.directionCorrect != null,
+        );
+        const directionCorrect = directionEvaluated.filter(
+          (r) => r.prediction.directionCorrect === 1,
         );
         const avgBrier =
           evaluated.length > 0
@@ -104,6 +149,10 @@ export function startApiServer(): void {
             accuracy:
               actionable.length > 0
                 ? correct.length / actionable.length
+                : null,
+            directionalAccuracy:
+              directionEvaluated.length > 0
+                ? directionCorrect.length / directionEvaluated.length
                 : null,
             averageBrier: avgBrier,
           }),
@@ -135,8 +184,11 @@ export function startApiServer(): void {
               ticker: row.interval.kalshiTicker,
               threshold: row.interval.threshold,
               secondsRemaining: row.prediction.secondsRemaining,
+              predictedDirection: row.prediction.predictedDirection,
+              tradeRecommendation: row.prediction.tradeRecommendation,
               recommendation: row.prediction.recommendation,
               predictedHigh: row.prediction.adjustedHighProbability,
+              monteCarloHigh: row.prediction.monteCarloHighProbability,
               confidence: row.prediction.confidence,
               finalResult: row.prediction.finalResult ?? row.interval.finalResult,
               actualHigh: row.prediction.actualHigh,
@@ -144,6 +196,10 @@ export function startApiServer(): void {
                 row.prediction.recommendationCorrect == null
                   ? null
                   : row.prediction.recommendationCorrect === 1,
+              directionCorrect:
+                row.prediction.directionCorrect == null
+                  ? null
+                  : row.prediction.directionCorrect === 1,
               brierScore: row.prediction.brierScore,
               reasons: (row.prediction.reasonCodes as { reasons?: string[] } | null)
                 ?.reasons,

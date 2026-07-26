@@ -127,6 +127,29 @@ export class PriceHistory {
     if (returnCount === 0) return null;
     return Math.sqrt(sumSquaredReturns / elapsedSeconds);
   }
+
+  /**
+   * Prices observed inside the settlement window that has already started.
+   * Returns oldest → newest samples from [closeTime - windowSeconds, now].
+   */
+  getSettlementWindowPrices(
+    closeTimeMs: number,
+    windowSeconds: number,
+    now = Date.now(),
+  ): number[] {
+    const windowStart = closeTimeMs - windowSeconds * 1000;
+    if (now < windowStart) return [];
+
+    const window = this.getWindow(Math.max(windowSeconds * 1000, 60_000));
+    window.prune(now);
+    const prices: number[] = [];
+    for (const point of window.getValues()) {
+      if (point.timestamp >= windowStart && point.timestamp <= now) {
+        prices.push(point.value);
+      }
+    }
+    return prices;
+  }
 }
 
 export function standardDeviation(values: number[]): number {
