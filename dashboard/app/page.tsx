@@ -134,13 +134,9 @@ export default function DashboardPage() {
         ? "HIGH"
         : "LOW"
     : null;
-  const forecastSide = rec?.predictedDirection ?? null;
-  const forecastColor =
-    forecastSide === "HIGH"
-      ? "#22c55e"
-      : forecastSide === "LOW"
-        ? "#ef4444"
-        : "#94a3b8";
+  const signal = rec?.recommendation ?? null;
+  const signalColor =
+    signal === "HIGH" ? "#22c55e" : signal === "LOW" ? "#ef4444" : "#94a3b8";
   const filteredHistory = history.filter((row) => {
     if (signalFilter === "ALL") return true;
     if (signalFilter === "ACTIONABLE") {
@@ -174,14 +170,14 @@ export default function DashboardPage() {
           </div>
           {rec ? (
             <>
-              <div className="signal-value" style={{ color: forecastColor }}>
-                {forecastSide ? (
+              <div className="signal-value" style={{ color: signalColor }}>
+                {signal === "HIGH" || signal === "LOW" ? (
                   <>
-                    <DirectionArrow side={forecastSide} size={28} />
-                    {forecastSide}
+                    <DirectionArrow side={signal} size={28} />
+                    {signal}
                   </>
                 ) : (
-                  rec.recommendation
+                  signal
                 )}
               </div>
               <Metric label="P(HIGH)" value={`${(rec.highProbability * 100).toFixed(1)}%`} />
