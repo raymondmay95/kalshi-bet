@@ -39,6 +39,19 @@ export const marketSnapshots = pgTable("market_snapshots", {
   kalshiFeaturesJson: jsonb("kalshi_features_json"),
 });
 
+export const modelParams = pgTable("model_params", {
+  id: serial("id").primaryKey(),
+  fittedAt: timestamp("fitted_at", { withTimezone: true }).defaultNow().notNull(),
+  sampleCount: integer("sample_count").notNull(),
+  // Platt calibration: P = sigmoid(intercept + slope * logit(raw)).
+  // Null when the fitted calibration failed walk-forward validation.
+  calibrationIntercept: doublePrecision("calibration_intercept"),
+  calibrationSlope: doublePrecision("calibration_slope"),
+  // Multiplier applied to predicted volatility (std-dev units).
+  volScale: doublePrecision("vol_scale"),
+  metricsJson: jsonb("metrics_json"),
+});
+
 export const predictions = pgTable("predictions", {
   id: serial("id").primaryKey(),
   marketIntervalId: integer("market_interval_id")
@@ -54,6 +67,12 @@ export const predictions = pgTable("predictions", {
   confidence: doublePrecision("confidence").notNull(),
   reasonCodes: jsonb("reason_codes"),
   secondsRemaining: integer("seconds_remaining"),
+  // Lock-time model internals, recorded so the learner can train on them.
+  btcPrice: doublePrecision("btc_price"),
+  remainingStdDev: doublePrecision("remaining_std_dev"),
+  zScore: doublePrecision("z_score"),
+  appliedDrift: doublePrecision("applied_drift"),
+  modelParamsId: integer("model_params_id").references(() => modelParams.id),
   finalResult: text("final_result"),
   actualHigh: doublePrecision("actual_high"),
   recommendationCorrect: integer("recommendation_correct"),
@@ -75,6 +94,7 @@ export const paperTrades = pgTable("paper_trades", {
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
 });
 
+export type ModelParams = typeof modelParams.$inferSelect;
 export type MarketInterval = typeof marketIntervals.$inferSelect;
 export type MarketSnapshot = typeof marketSnapshots.$inferSelect;
 export type Prediction = typeof predictions.$inferSelect;

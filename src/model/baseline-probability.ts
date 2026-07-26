@@ -1,3 +1,5 @@
+import { applyCalibration, type PlattCalibration } from "./calibration.js";
+
 export interface ProbabilityInput {
   currentPrice: number;
   threshold: number;
@@ -7,6 +9,13 @@ export interface ProbabilityInput {
   /** Expected dollar drift per second, from the trend estimator. */
   driftPerSecond?: number;
   minimumVolatility?: number;
+}
+
+export interface ProbabilityOptions {
+  /** Fixed log-odds shrink used when no fitted calibration is available. */
+  confidenceMultiplier?: number;
+  /** Calibration learned from settled history; overrides the fixed shrink. */
+  calibration?: PlattCalibration | null;
 }
 
 export interface ProbabilityOutput {
@@ -35,7 +44,9 @@ const MAX_DRIFT_STDDEVS = 1.5;
 
 // Never claim certainty: BTC returns have fat tails that the normal
 // model understates.
-const PROBABILITY_CAP = 0.99;
+export const PROBABILITY_CAP = 0.99;
+
+export const DEFAULT_CONFIDENCE_MULTIPLIER = 0.85;
 
 export function normalCdf(x: number): number {
   const t = 1 / (1 + 0.2316419 * Math.abs(x));
@@ -89,8 +100,10 @@ export function estimateVolatilityPerSqrtSecond(
 
 export function calculateBaselineProbability(
   input: ProbabilityInput,
-  confidenceMultiplier = 0.85,
+  options: ProbabilityOptions = {},
 ): ProbabilityOutput {
+  const confidenceMultiplier =
+    options.confidenceMultiplier ?? DEFAULT_CONFIDENCE_MULTIPLIER;
   const effectiveSeconds = effectiveSecondsForSettlement(input.secondsRemaining);
   const minimumVolatility =
     input.minimumVolatility ??
@@ -113,8 +126,11 @@ export function calculateBaselineProbability(
       : 0;
 
   const rawHighProbability = clamp(normalCdf(zScore), 0, 1);
+  const calibrated = options.calibration
+    ? applyCalibration(rawHighProbability, options.calibration)
+    : shrinkTowardHalfInLogOdds(rawHighProbability, confidenceMultiplier);
   const adjustedHighProbability = clamp(
-    shrinkTowardHalfInLogOdds(rawHighProbability, confidenceMultiplier),
+    calibrated,
     1 - PROBABILITY_CAP,
     PROBABILITY_CAP,
   );
@@ -140,15 +156,13 @@ export function calculateBaselineProbability(
  * Shrink a probability toward 0.5 in log-odds space. Behaves far better
  * near 0 and 1 than a linear shrink in probability space, and models
  * "the z-score is systematically overconfident by a constant factor".
+ * Equivalent to a Platt calibration with intercept 0.
  */
 export function shrinkTowardHalfInLogOdds(
   probability: number,
   multiplier: number,
 ): number {
-  const epsilon = 1e-9;
-  const p = clamp(probability, epsilon, 1 - epsilon);
-  const logOdds = Math.log(p / (1 - p));
-  return 1 / (1 + Math.exp(-multiplier * logOdds));
+  return applyCalibration(probability, { intercept: 0, slope: multiplier });
 }
 
 function clamp(value: number, min: number, max: number): number {

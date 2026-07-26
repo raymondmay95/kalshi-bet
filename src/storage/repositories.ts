@@ -107,6 +107,7 @@ export class RecorderService {
     probability: ProbabilityOutput;
     recommendation: BetRecommendation;
     paperTrade: PaperTradeResult | null;
+    modelParamsId?: number | null;
   }): Promise<number> {
     const intervalId = await this.ensureMarketInterval(
       input.market,
@@ -128,6 +129,11 @@ export class RecorderService {
           recommendation: input.recommendation.recommendation,
           confidence: input.recommendation.confidence,
           secondsRemaining: input.recommendation.secondsRemaining,
+          btcPrice: input.recommendation.btcPrice,
+          remainingStdDev: input.probability.remainingStdDev,
+          zScore: input.probability.zScore,
+          appliedDrift: input.probability.appliedDrift,
+          modelParamsId: input.modelParamsId ?? null,
           reasonCodes: {
             reasons: input.recommendation.reasons,
             warnings: input.recommendation.warnings,

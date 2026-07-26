@@ -96,6 +96,15 @@ cd dashboard && npm install && cp .env.local.example .env.local && npm run dev
 - `MINIMUM_SECONDS_REMAINING=90`
 - `PAPER_TRADING=true`
 
+## Learning from history
+
+The engine improves itself as settled intervals accumulate — no manual retraining needed:
+
+- **Probability calibration** (needs 100+ settled intervals): a Platt calibration is fit on `rawHighProbability` vs actual outcomes, replacing the fixed log-odds shrink. It is validated walk-forward (fit on the older 80%, tested on the newest 20%) and only used when it beats the fixed default on Brier score.
+- **Volatility scale** (needs 30+ settled intervals): the predicted standard deviation is compared with realized lock-to-settle moves and corrected with a recency-weighted multiplier, clamped to 0.5x–2x.
+
+Refitting happens at startup and after every settlement. Fitted parameters live in the `model_params` table with their fit metrics, and each prediction records which parameter set produced it (`model_params_id`), so generations can be compared. With no or insufficient history the engine uses fixed defaults.
+
 ## Notes
 
 - Settlement uses CF Benchmarks BRTI 60-second average, not Binance last trade.

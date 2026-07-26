@@ -13,8 +13,9 @@ import {
 export class SettlementRecorder {
   constructor(private readonly kalshiService: KalshiMarketService) {}
 
-  async settleClosedIntervals(): Promise<void> {
+  async settleClosedIntervals(): Promise<number> {
     const db = getDb();
+    let settledCount = 0;
     const openIntervals = await db
       .select()
       .from(marketIntervals)
@@ -69,10 +70,13 @@ export class SettlementRecorder {
           .where(eq(paperTrades.id, row.trade.id));
       }
 
+      settledCount += 1;
       logger.info(
         { ticker: interval.kalshiTicker, result, evaluated, trades: trades.length },
         "Settled market interval",
       );
     }
+
+    return settledCount;
   }
 }

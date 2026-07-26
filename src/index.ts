@@ -23,6 +23,7 @@ import {
   type ProbabilityOutput,
 } from "./model/baseline-probability.js";
 import { estimateTrend } from "./model/trend-estimator.js";
+import { AdaptiveModelService } from "./model/adaptive-model.js";
 import type { BetRecommendation } from "./decision/decision-engine.js";
 import { startApiServer, updateLiveState } from "./api/server.js";
 import { closeDb, getDb } from "./storage/database.js";
@@ -45,6 +46,7 @@ interface LockedPrediction {
   probability: ProbabilityOutput;
   recommendation: BetRecommendation;
   paperTrade: PaperTradeResult | null;
+  modelParamsId: number | null;
   persisted: boolean;
 }
 
@@ -66,6 +68,7 @@ class PredictionEngine {
   private recorder = new RecorderService();
   private paperTrader = new PaperTrader();
   private settlementRecorder = new SettlementRecorder(this.kalshi);
+  private adaptiveModel = new AdaptiveModelService();
 
   private currentMarket: KalshiMarket | null = null;
   private openingBtcPrice: number | null = null;
@@ -85,6 +88,10 @@ class PredictionEngine {
     } catch (error) {
       logger.warn({ error }, "Database unavailable; running without persistence");
     }
+
+    // Load previously fitted parameters and refit on current history.
+    // Falls back to fixed defaults when there is not enough data.
+    await this.adaptiveModel.initialize();
 
     await backfillPriceCandles((candle) =>
       this.featureEngine.onPrice(candle.timestamp, candle.close),
@@ -128,7 +135,18 @@ class PredictionEngine {
     }, env.SNAPSHOT_INTERVAL_MS);
 
     this.settlementTimer = setInterval(() => {
-      void this.settlementRecorder.settleClosedIntervals();
+      void this.settlementRecorder
+        .settleClosedIntervals()
+        .then((settledCount) => {
+          // Every settlement adds a labeled example; refit so the next
+          // interval's prediction uses the newest parameters.
+          if (settledCount > 0) {
+            return this.adaptiveModel.refit();
+          }
+        })
+        .catch((error) => {
+          logger.error({ error }, "Settlement/refit cycle failed");
+        });
     }, 30_000);
 
     void this.tick();
@@ -232,14 +250,17 @@ class PredictionEngine {
       input;
     const threshold = market.floorStrike ?? 0;
 
-    const volPerSqrtSecond = estimateVolatilityPerSqrtSecond(
-      blendVolatilityPerSqrtSecond([
-        { value: features.volatilityPerSqrtSecond["volps_60000ms"], weight: 0.4 },
-        { value: features.volatilityPerSqrtSecond["volps_300000ms"], weight: 0.4 },
-        { value: features.volatilityPerSqrtSecond["volps_900000ms"], weight: 0.2 },
-      ]),
-      features.currentPrice,
-    );
+    const adaptiveParams = this.adaptiveModel.getParams();
+
+    const volPerSqrtSecond =
+      estimateVolatilityPerSqrtSecond(
+        blendVolatilityPerSqrtSecond([
+          { value: features.volatilityPerSqrtSecond["volps_60000ms"], weight: 0.4 },
+          { value: features.volatilityPerSqrtSecond["volps_300000ms"], weight: 0.4 },
+          { value: features.volatilityPerSqrtSecond["volps_900000ms"], weight: 0.2 },
+        ]),
+        features.currentPrice,
+      ) * adaptiveParams.volScale;
 
     const trend = estimateTrend({
       price: features.currentPrice,
@@ -248,13 +269,16 @@ class PredictionEngine {
       bookImbalance: features.bookImbalance,
     });
 
-    const probability = calculateBaselineProbability({
-      currentPrice: features.currentPrice,
-      threshold,
-      secondsRemaining,
-      volatilityPerSqrtSecond: volPerSqrtSecond,
-      driftPerSecond: trend.driftDollarsPerSecond,
-    });
+    const probability = calculateBaselineProbability(
+      {
+        currentPrice: features.currentPrice,
+        threshold,
+        secondsRemaining,
+        volatilityPerSqrtSecond: volPerSqrtSecond,
+        driftPerSecond: trend.driftDollarsPerSecond,
+      },
+      { calibration: adaptiveParams.calibration },
+    );
 
     const decision = makeDecision({
       highProbability: probability.adjustedHighProbability,
@@ -296,6 +320,7 @@ class PredictionEngine {
       probability,
       recommendation,
       paperTrade,
+      modelParamsId: adaptiveParams.paramsId,
       persisted: false,
     };
 
@@ -309,6 +334,9 @@ class PredictionEngine {
         driftBpsPerSecond: trend.driftBpsPerSecond.toFixed(4),
         remainingStdDev: probability.remainingStdDev.toFixed(2),
         paperTradeSide: paperTrade?.side ?? null,
+        modelParamsId: adaptiveParams.paramsId,
+        volScale: adaptiveParams.volScale,
+        calibrated: adaptiveParams.calibration != null,
         secondsRemaining,
       },
       "Prediction locked for interval",
@@ -327,6 +355,7 @@ class PredictionEngine {
         probability: locked.probability,
         recommendation: locked.recommendation,
         paperTrade: locked.paperTrade,
+        modelParamsId: locked.modelParamsId,
       });
       locked.persisted = true;
       logger.info(
