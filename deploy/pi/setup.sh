@@ -49,18 +49,21 @@ log "Installing npm dependencies..."
 npm install
 npm install --prefix dashboard
 
-if [[ ! -f .env ]]; then
-  cp .env.example .env
-  log "Created .env from .env.example"
-fi
-
-if [[ ! -f dashboard/.env.local ]]; then
-  PI_IP="$(hostname -I | awk '{print $1}')"
-  cat > dashboard/.env.local <<EOF
+ensure_env_files() {
+  if [[ ! -f .env ]]; then
+    cp .env.example .env
+    log "Created .env from .env.example"
+  fi
+  if [[ ! -f dashboard/.env.local ]]; then
+    PI_IP="$(hostname -I | awk '{print $1}')"
+    cat > dashboard/.env.local <<EOF
 NEXT_PUBLIC_API_BASE=http://${PI_IP}:3001
 EOF
-  log "Created dashboard/.env.local with API base http://${PI_IP}:3001"
-fi
+    log "Created dashboard/.env.local with API base http://${PI_IP}:3001"
+  fi
+}
+
+ensure_env_files
 
 log "Building engine..."
 npm run build

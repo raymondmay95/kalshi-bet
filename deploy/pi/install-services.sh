@@ -57,6 +57,24 @@ if [[ ! -f "$ROOT_DIR/dist/src/index.js" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$ROOT_DIR/dashboard/.env.local" ]]; then
+  PI_IP="$(hostname -I 2>/dev/null | awk '{print $1}')"
+  if [[ -z "$PI_IP" ]]; then
+    PI_IP="127.0.0.1"
+  fi
+  cat > "$ROOT_DIR/dashboard/.env.local" <<EOF
+NEXT_PUBLIC_API_BASE=http://${PI_IP}:3001
+EOF
+  chown "$RUN_USER:$RUN_GROUP" "$ROOT_DIR/dashboard/.env.local" 2>/dev/null || true
+  echo "Created $ROOT_DIR/dashboard/.env.local"
+fi
+
+if [[ ! -f "$ROOT_DIR/.env" ]]; then
+  cp "$ROOT_DIR/.env.example" "$ROOT_DIR/.env"
+  chown "$RUN_USER:$RUN_GROUP" "$ROOT_DIR/.env" 2>/dev/null || true
+  echo "Created $ROOT_DIR/.env"
+fi
+
 if [[ $EUID -ne 0 ]]; then
   echo "Re-running with sudo..."
   exec sudo INSTALL_DIR="$ROOT_DIR" RUN_USER="$RUN_USER" RUN_GROUP="$RUN_GROUP" "$0"
