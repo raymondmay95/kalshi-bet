@@ -70,6 +70,10 @@ export const modelParams = pgTable("model_params", {
   calibrationSlope: doublePrecision("calibration_slope"),
   // Multiplier applied to predicted volatility (std-dev units).
   volScale: doublePrecision("vol_scale"),
+  // Measured basis between our spot feed and the BRTI average that settles,
+  // in dollars. Null until enough near-the-strike intervals have settled.
+  basisOffset: doublePrecision("basis_offset"),
+  basisStdDev: doublePrecision("basis_std_dev"),
   metricsJson: jsonb("metrics_json"),
 });
 

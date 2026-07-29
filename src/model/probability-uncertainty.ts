@@ -19,11 +19,21 @@ export const DEFAULT_VOL_RELATIVE_ERROR = 0.3;
 export const DEFAULT_DRIFT_UNCERTAINTY_SHARE = 0.7;
 
 /**
- * Irreducible error floor covering model misspecification: normal-tail
+ * Irreducible error floor covering model misspecification: the normal-tail
  * approximation, and the basis between our spot feed and the CF Benchmarks
  * BRTI average that actually settles the market.
+ *
+ * This is a standing assumption, not a measurement — it is what applies while
+ * the basis is still unknown.
  */
 export const DEFAULT_MODEL_ERROR_FLOOR = 0.02;
+
+/**
+ * Floor used once the basis has actually been measured. Lower because the basis
+ * is then priced explicitly in the settlement variance instead of being bundled
+ * into this term, leaving it to cover only the normal-tail approximation.
+ */
+export const DEFAULT_MEASURED_BASIS_ERROR_FLOOR = 0.01;
 
 const MIN_STD_ERROR = 0.005;
 const MAX_STD_ERROR = 0.25;
@@ -36,6 +46,8 @@ export interface ProbabilityUncertaintyInput extends ProbabilityInput {
   volRelativeError?: number;
   driftUncertaintyShare?: number;
   modelErrorFloor?: number;
+  /** Floor applied instead of `modelErrorFloor` once the basis is measured. */
+  measuredBasisErrorFloor?: number;
 }
 
 export interface ProbabilityUncertainty {
@@ -49,6 +61,8 @@ export interface ProbabilityUncertainty {
   samplingComponent: number;
   /** Model-misspecification floor. */
   modelComponent: number;
+  /** Whether a measured basis let the lower floor apply. */
+  usedMeasuredBasis: boolean;
 }
 
 /**
@@ -64,7 +78,13 @@ export function estimateProbabilityUncertainty(
   const volError = input.volRelativeError ?? DEFAULT_VOL_RELATIVE_ERROR;
   const driftShare =
     input.driftUncertaintyShare ?? DEFAULT_DRIFT_UNCERTAINTY_SHARE;
-  const modelFloor = input.modelErrorFloor ?? DEFAULT_MODEL_ERROR_FLOOR;
+
+  // With the basis measured it is priced in the settlement variance, so this
+  // term no longer has to absorb it and drops to the tail-approximation floor.
+  const usedMeasuredBasis = options.settlementBasis != null;
+  const modelFloor = usedMeasuredBasis
+    ? input.measuredBasisErrorFloor ?? DEFAULT_MEASURED_BASIS_ERROR_FLOOR
+    : input.modelErrorFloor ?? DEFAULT_MODEL_ERROR_FLOOR;
 
   const probabilityAt = (overrides: Partial<ProbabilityInput>): number =>
     calculateBaselineProbability({ ...input, ...overrides }, options)
@@ -107,6 +127,7 @@ export function estimateProbabilityUncertainty(
     driftComponent,
     samplingComponent,
     modelComponent: modelFloor,
+    usedMeasuredBasis,
   };
 }
 

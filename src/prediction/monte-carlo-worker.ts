@@ -44,6 +44,8 @@ function simulate(job: PredictionJob) {
     seed: job.seed,
     shockDistribution: job.shockDistribution,
     studentTDegreesOfFreedom: job.studentTDegreesOfFreedom,
+    basisOffset: job.basisOffset,
+    basisStdDev: job.basisStdDev,
   });
 
   return {

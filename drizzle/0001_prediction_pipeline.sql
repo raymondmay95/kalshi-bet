@@ -35,6 +35,22 @@ CREATE TABLE IF NOT EXISTS "model_metrics" (
   "created_at" timestamp with time zone DEFAULT now() NOT NULL
 );
 
+-- Created here as well as by drizzle-kit push: the whole file is applied as one
+-- implicit transaction, so an ALTER against a missing table would roll back
+-- every other statement above.
+CREATE TABLE IF NOT EXISTS "model_params" (
+  "id" serial PRIMARY KEY NOT NULL,
+  "fitted_at" timestamp with time zone DEFAULT now() NOT NULL,
+  "sample_count" integer NOT NULL,
+  "calibration_intercept" double precision,
+  "calibration_slope" double precision,
+  "vol_scale" double precision,
+  "metrics_json" jsonb
+);
+
+ALTER TABLE "model_params" ADD COLUMN IF NOT EXISTS "basis_offset" double precision;
+ALTER TABLE "model_params" ADD COLUMN IF NOT EXISTS "basis_std_dev" double precision;
+
 CREATE INDEX IF NOT EXISTS "market_intervals_final_result_idx" ON "market_intervals" ("final_result");
 CREATE INDEX IF NOT EXISTS "market_intervals_interval_end_idx" ON "market_intervals" ("interval_end");
 CREATE INDEX IF NOT EXISTS "market_snapshots_interval_ts_idx" ON "market_snapshots" ("market_interval_id","timestamp");

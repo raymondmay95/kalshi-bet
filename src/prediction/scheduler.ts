@@ -20,6 +20,13 @@ export interface AnalyticalSnapshot {
   yesMid: number;
   noMid: number;
   observedSettlementPrices: number[];
+  /**
+   * Measured basis to the settling BRTI average, in dollars. Omitted until the
+   * adaptive model has fitted one, in which case the simulation treats our feed
+   * as settling the market exactly.
+   */
+  basisOffset?: number;
+  basisStdDev?: number;
 }
 
 export interface SchedulerCallbacks {
@@ -193,6 +200,8 @@ export class PredictionScheduler {
       shockDistribution: env.MONTE_CARLO_SHOCK_DISTRIBUTION,
       studentTDegreesOfFreedom: env.MONTE_CARLO_STUDENT_T_DF,
       observedSettlementPrices: snapshot.observedSettlementPrices,
+      basisOffset: snapshot.basisOffset ?? 0,
+      basisStdDev: snapshot.basisStdDev ?? 0,
     };
 
     const status = this.pool.submit(job);

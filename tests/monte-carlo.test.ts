@@ -125,4 +125,68 @@ describe("settlement Monte Carlo", () => {
     const b = createRng(123);
     expect([a(), a(), a()]).toEqual([b(), b(), b()]);
   });
+
+  it("defaults to no basis, leaving an at-the-money market a coin flip", () => {
+    const result = runSettlementMonteCarlo({
+      currentPrice: 100_000,
+      strike: 100_000,
+      secondsRemaining: 300,
+      volatility: 8,
+      drift: 0,
+      settlementWindowSeconds: 60,
+      pathCount: 4000,
+      seed: 11,
+      shockDistribution: "normal",
+    });
+    expect(result.highProbability).toBeGreaterThan(0.45);
+    expect(result.highProbability).toBeLessThan(0.55);
+  });
+
+  it("raises P(HIGH) when the index settles above our feed", () => {
+    const base = {
+      currentPrice: 100_000,
+      strike: 100_000,
+      secondsRemaining: 60,
+      volatility: 4,
+      drift: 0,
+      settlementWindowSeconds: 60,
+      pathCount: 6000,
+      seed: 21,
+      shockDistribution: "normal" as const,
+    };
+
+    const withoutBasis = runSettlementMonteCarlo(base);
+    const withPositiveOffset = runSettlementMonteCarlo({
+      ...base,
+      basisOffset: 60,
+    });
+
+    expect(withPositiveOffset.highProbability).toBeGreaterThan(
+      withoutBasis.highProbability,
+    );
+    expect(withPositiveOffset.estimatedSettlementAverage).toBeGreaterThan(
+      withoutBasis.estimatedSettlementAverage,
+    );
+  });
+
+  it("pulls a far-from-strike market toward a coin flip as basis noise grows", () => {
+    const base = {
+      currentPrice: 100_000,
+      strike: 99_950,
+      secondsRemaining: 30,
+      volatility: 2,
+      drift: 0,
+      settlementWindowSeconds: 60,
+      pathCount: 6000,
+      seed: 31,
+      shockDistribution: "normal" as const,
+    };
+
+    const confident = runSettlementMonteCarlo(base);
+    const noisy = runSettlementMonteCarlo({ ...base, basisStdDev: 200 });
+
+    expect(confident.highProbability).toBeGreaterThan(0.9);
+    expect(noisy.highProbability).toBeLessThan(confident.highProbability);
+    expect(noisy.highProbability).toBeGreaterThan(0.5);
+  });
 });

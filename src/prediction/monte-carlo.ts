@@ -28,11 +28,25 @@ export interface MonteCarloInput {
   studentTDegreesOfFreedom?: number;
   /** Simulation step size inside the settlement window (seconds). */
   stepSeconds?: number;
+  /**
+   * Measured basis to the settling BRTI average, in dollars: the index average
+   * is modelled as our own average plus `basisOffset` plus Gaussian noise of
+   * `basisStdDev`. Drawn fresh per path, since the basis is a new realization
+   * each interval rather than a fixed unknown. Gaussian to match the probit the
+   * basis is estimated with. Both default to zero, reproducing a feed assumed
+   * to settle the market exactly.
+   */
+  basisOffset?: number;
+  basisStdDev?: number;
 }
 
 export interface MonteCarloResult {
   highProbability: number;
   lowProbability: number;
+  /**
+   * Mean simulated settlement reference — our own average shifted by the basis
+   * offset, so it is directly comparable to the strike.
+   */
   estimatedSettlementAverage: number;
   pathCount: number;
   durationMs: number;
@@ -112,6 +126,9 @@ export function runSettlementMonteCarlo(input: MonteCarloInput): MonteCarloResul
   const distribution = input.shockDistribution ?? "student-t";
   const df = Math.max(2, Math.floor(input.studentTDegreesOfFreedom ?? 5));
 
+  const basisOffset = input.basisOffset ?? 0;
+  const basisStdDev = Math.max(0, input.basisStdDev ?? 0);
+
   const observed = toFloat64(input.observedSettlementPrices);
   const observedCount = observed.length;
   const observedSum = sumFloat64(observed);
@@ -179,9 +196,16 @@ export function runSettlementMonteCarlo(input: MonteCarloInput): MonteCarloResul
       totalWeight = windowSeconds;
     }
 
+    // The market settles on the index average, not ours, so compare the
+    // basis-adjusted reference against the strike.
     const settlementAverage = totalSum / totalWeight;
-    settlementSum += settlementAverage;
-    if (settlementAverage >= input.strike) {
+    const settlementReference =
+      settlementAverage +
+      basisOffset +
+      (basisStdDev > 0 ? basisStdDev * boxMuller(rng) : 0);
+
+    settlementSum += settlementReference;
+    if (settlementReference >= input.strike) {
       highCount += 1;
     }
   }

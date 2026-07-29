@@ -207,6 +207,7 @@ class PredictionEngine {
       const ctx = this.collectContext();
       if (!ctx) return;
 
+      const basis = this.adaptiveModel.getParams().settlementBasis;
       this.scheduler.onMarketUpdate({
         marketId: ctx.market.ticker,
         currentPrice: ctx.features.currentPrice,
@@ -217,6 +218,8 @@ class PredictionEngine {
         yesMid: (ctx.kalshiState.yesBid + ctx.kalshiState.yesAsk) / 2,
         noMid: (ctx.kalshiState.noBid + ctx.kalshiState.noAsk) / 2,
         observedSettlementPrices: ctx.observedSettlementPrices,
+        basisOffset: basis?.offset,
+        basisStdDev: basis?.stdDev,
       });
 
       updateLiveState({
@@ -241,7 +244,10 @@ class PredictionEngine {
       volatilityPerSqrtSecond: ctx.volPerSqrtSecond,
       driftPerSecond: ctx.trend.driftDollarsPerSecond,
     };
-    const probabilityOptions = { calibration: adaptiveParams.calibration };
+    const probabilityOptions = {
+      calibration: adaptiveParams.calibration,
+      settlementBasis: adaptiveParams.settlementBasis,
+    };
     const probability = calculateBaselineProbability(
       probabilityInput,
       probabilityOptions,
@@ -267,6 +273,7 @@ class PredictionEngine {
         volRelativeError: env.VOL_RELATIVE_ERROR,
         driftUncertaintyShare: env.DRIFT_UNCERTAINTY_SHARE,
         modelErrorFloor: env.MODEL_ERROR_FLOOR,
+        measuredBasisErrorFloor: env.MEASURED_BASIS_ERROR_FLOOR,
       },
       probabilityOptions,
     );

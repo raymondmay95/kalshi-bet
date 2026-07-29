@@ -1,4 +1,5 @@
 import { applyCalibration, type PlattCalibration } from "./calibration.js";
+import type { SettlementBasis } from "./settlement-basis.js";
 
 export interface ProbabilityInput {
   currentPrice: number;
@@ -16,6 +17,13 @@ export interface ProbabilityOptions {
   confidenceMultiplier?: number;
   /** Calibration learned from settled history; overrides the fixed shrink. */
   calibration?: PlattCalibration | null;
+  /**
+   * Measured basis to the settling BRTI average. Its offset corrects the price
+   * and its standard deviation joins the settlement variance, because the basis
+   * is a fresh draw each interval rather than a fixed unknown. Null until
+   * enough near-the-strike intervals have settled to measure it.
+   */
+  settlementBasis?: SettlementBasis | null;
 }
 
 export interface ProbabilityOutput {
@@ -24,7 +32,18 @@ export interface ProbabilityOutput {
   lowProbability: number;
   zScore: number;
   effectiveSeconds: number;
+  /**
+   * Diffusion-only standard deviation of the remaining move, excluding any
+   * settlement basis. Kept basis-free because `fitVolScale` trains against it
+   * using realized moves measured on our own feed — folding the basis in here
+   * would bias the learned volatility scale downward to compensate.
+   */
   remainingStdDev: number;
+  /**
+   * Total standard deviation the z-score is divided by: diffusion and basis
+   * combined in quadrature. Equals `remainingStdDev` when no basis is measured.
+   */
+  settlementStdDev: number;
   /** Dollar drift applied to the z-score (after capping). */
   appliedDrift: number;
   confidence: number;
@@ -113,6 +132,12 @@ export function calculateBaselineProbability(
     minimumVolatility,
   );
 
+  const basis = options.settlementBasis;
+  const settlementStdDev = Math.max(
+    Math.hypot(remainingStdDev, basis?.stdDev ?? 0),
+    minimumVolatility,
+  );
+
   const uncappedDrift = (input.driftPerSecond ?? 0) * effectiveSeconds;
   const appliedDrift = clamp(
     uncappedDrift,
@@ -121,8 +146,12 @@ export function calculateBaselineProbability(
   );
 
   const zScore =
-    remainingStdDev > 0
-      ? (input.currentPrice + appliedDrift - input.threshold) / remainingStdDev
+    settlementStdDev > 0
+      ? (input.currentPrice +
+          appliedDrift +
+          (basis?.offset ?? 0) -
+          input.threshold) /
+        settlementStdDev
       : 0;
 
   const rawHighProbability = clamp(normalCdf(zScore), 0, 1);
@@ -147,6 +176,7 @@ export function calculateBaselineProbability(
     zScore,
     effectiveSeconds,
     remainingStdDev,
+    settlementStdDev,
     appliedDrift,
     confidence,
   };

@@ -17,6 +17,9 @@ export interface PredictionJob {
   studentTDegreesOfFreedom: number;
   /** Prices already observed in the settlement window. */
   observedSettlementPrices: number[];
+  /** Measured basis to the settling BRTI average, in dollars. Zero when unmeasured. */
+  basisOffset: number;
+  basisStdDev: number;
 }
 
 export interface PredictionJobResult {

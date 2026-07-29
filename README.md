@@ -147,21 +147,56 @@ cd dashboard && npm install && cp .env.local.example .env.local && npm run dev
 
 | Parameter | Default | Effect |
 |-----------|---------|--------|
-| `MINIMUM_EDGE` | `0.01` | Smallest edge worth a `LEAN` |
-| `MODERATE_EDGE` / `STRONG_EDGE` | `0.03` / `0.06` | Rungs for the higher grades |
-| `MINIMUM_EDGE_CERTAINTY` | `0.55` | Minimum `P(edge > 0)` to act at all |
+| `MINIMUM_EDGE` | `0.02` | Smallest edge worth a `LEAN` |
+| `MODERATE_EDGE` / `STRONG_EDGE` | `0.04` / `0.07` | Rungs for the higher grades |
+| `MINIMUM_EDGE_CERTAINTY` | `0.60` | Minimum `P(edge > 0)` to act at all |
 | `MAXIMUM_SPREAD` | `0.15` | Widest spread worth crossing |
 | `MINIMUM_SECONDS_REMAINING` | `20` | Latest entry that can still be filled |
+| `MINIMUM_LIQUIDITY` | `20` | Contracts that must be resting on the chosen side |
 | `ASSUMED_ORDER_SIZE` | `20` | Contracts used to amortize the order-level fee |
 | `KELLY_MULTIPLIER` | `0.25` | Fractional Kelly on the discounted edge |
 | `MAXIMUM_STAKE_FRACTION` | `0.02` | Hard cap on bankroll risked per market |
+| `SLIPPAGE_CENTS` | `0.005` | Assumed drift between the quote and the fill |
 | `VOL_RELATIVE_ERROR` | `0.30` | Assumed error in the realized-vol estimate |
-| `MODEL_ERROR_FLOOR` | `0.02` | Irreducible probability error |
+| `MODEL_ERROR_FLOOR` | `0.02` | Irreducible probability error while the basis is unmeasured |
+| `MEASURED_BASIS_ERROR_FLOOR` | `0.01` | Replaces the above once the basis is measured |
 | `PAPER_TRADING` | `false` | Simulate fills and P&L |
 
-Raising `MINIMUM_EDGE` and `MINIMUM_EDGE_CERTAINTY` makes the engine pickier;
-setting `MINIMUM_EDGE` above roughly `0.05` will make bets very rare, since the
-model then has to beat the market's own mid by more than the spread plus costs.
+### Choosing the edge floor
+
+`MINIMUM_EDGE` is the parameter that decides whether the engine ever bets, and
+it is easy to set to a value no market can clear. The edge is measured against
+the *ask*, so at a 4c spread the model must beat the market's own mid by
+`MINIMUM_EDGE` plus half the spread plus about 2.3c of fees and slippage:
+
+| `MINIMUM_EDGE` | Disagreement with the mid needed for a `LEAN` |
+|----------------|-----------------------------------------------|
+| `0.01` | 5.3c |
+| `0.02` | 6.3c |
+| `0.04` | 8.3c |
+| `0.07` | 11.3c — effectively unreachable |
+
+`0.02` is the lowest useful floor. Below it, the half-standard-error haircut
+applied during sizing drives the discounted edge negative, Kelly returns zero,
+and every bet collapses to `MINIMUM_STAKE_FRACTION` — an actionable signal with
+a token stake. `MINIMUM_LIQUIDITY` should stay equal to `ASSUMED_ORDER_SIZE`,
+since amortizing the fee over more contracts than the book must show overstates
+every edge.
+
+### Auditing the configuration
+
+Two failure modes make a healthy-looking engine that never bets: a key renamed
+in code but left behind in `.env` is silently ignored, and an edge floor can be
+set higher than any market can clear. Both are reported by:
+
+```bash
+npm run check:env
+```
+
+It lists ignored keys, settings missing from `.env`, the effective gates, and
+the disagreement with the market that the current floor demands. `deploy/pi/pull-restart.sh`
+runs it on every deploy and backfills newly added settings, but never overwrites
+a value already in `.env`.
 
 ## Learning from history
 
@@ -169,11 +204,56 @@ The engine improves itself as settled intervals accumulate — no manual retrain
 
 - **Probability calibration** (needs 100+ settled intervals): a Platt calibration is fit on `rawHighProbability` vs actual outcomes, replacing the fixed log-odds shrink. It is validated walk-forward (fit on the older 80%, tested on the newest 20%) and only used when it beats the fixed default on Brier score.
 - **Volatility scale** (needs 30+ settled intervals): the predicted standard deviation is compared with realized lock-to-settle moves and corrected with a recency-weighted multiplier, clamped to 0.5x–2x.
+- **Settlement basis** (needs 500+ settled intervals, 75+ of them near the strike): the gap between our spot feed and the BRTI average that settles the market, measured rather than assumed. See below.
+
+### Measuring the settlement basis
+
+The market settles on the CF Benchmarks BRTI 60-second average, not on our spot
+feed, and Kalshi's API returns only the binary result — never the numeric BRTI
+value. The basis therefore cannot be differenced directly, but it can be
+recovered from the outcomes. Writing `distance` for our own final-minute average
+minus the strike:
+
+```
+P(settles HIGH) = Phi((distance + offset) / basisStdDev)
+```
+
+Fitting that two-parameter probit to settled intervals recovers both a
+systematic `offset` (our venue trading persistently rich or cheap to the index)
+and the interval-to-interval `basisStdDev`. The market's own mid would estimate
+the same quantity far more efficiently and is deliberately not used: calibrating
+to the market's prices would erase exactly the disagreement the engine profits
+from.
+
+Once measured, the offset corrects the price and the standard deviation joins the
+settlement variance in quadrature — the basis is a fresh draw each interval, not
+a fixed unknown, so it belongs in the variance rather than in the standard error.
+The Monte Carlo draws it per path for the same reason. `MODEL_ERROR_FLOOR` then
+drops to `MEASURED_BASIS_ERROR_FLOOR`, since it no longer has to stand in for a
+basis that is now priced explicitly.
+
+The fit is powered only by intervals that settled *near* the strike; a window
+ending $400 from it was never in doubt and says nothing about a basis worth a few
+dollars. That is why the sample gate is so much higher than for the other two
+learners, and why it self-adjusts: a small basis produces few near-strike
+intervals and waits longer, which is harmless because a small basis barely moves
+a probability. Simulated at a $300 window standard deviation, 500 intervals
+(about five days at 96 windows a day) pins a $20 basis to roughly ±25%, while a
+$5 basis needs around 2000.
+
+`npm run report:daily` prints the current estimate, or says plainly that
+`MODEL_ERROR_FLOOR` is still standing in for it.
+
+> Binance is deliberately **not** used as a second opinion here. It is not a BRTI
+> constituent — the index is built from Bitstamp, Coinbase, Gemini, Kraken, LMAX
+> Digital, Bullish and Crypto.com — its BTCUSDT pair is quoted in USDT rather
+> than USD, and it geo-blocks US IPs. Additional venues should come from the
+> constituent list.
 
 Refitting happens at startup and after every settlement. Fitted parameters live in the `model_params` table with their fit metrics, and each prediction records which parameter set produced it (`model_params_id`), so generations can be compared. With no or insufficient history the engine uses fixed defaults.
 
 ## Notes
 
-- Settlement uses CF Benchmarks BRTI 60-second average, not Binance last trade. The gap between that and our spot feed is part of `MODEL_ERROR_FLOOR`.
+- Settlement uses the CF Benchmarks BRTI 60-second average, not our spot feed's last trade. That gap is covered by `MODEL_ERROR_FLOOR` until enough intervals settle to measure it, then priced explicitly.
 - Recommendations use executable Kalshi asks plus taker fees and slippage.
 - Real order placement is intentionally disabled; paper trading only.

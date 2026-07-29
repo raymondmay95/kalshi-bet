@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { calculateBaselineProbability } from "../src/model/baseline-probability.js";
 import {
   conservativeEdge,
   estimateProbabilityUncertainty,
@@ -119,5 +120,71 @@ describe("conservative edge", () => {
 
   it("can turn a noisy positive edge negative", () => {
     expect(conservativeEdge(0.02, 0.2, 0.5)).toBeLessThan(0);
+  });
+});
+
+describe("measured settlement basis", () => {
+  const input = {
+    currentPrice: 100_000,
+    threshold: 100_000,
+    secondsRemaining: 300,
+    volatilityPerSqrtSecond: 8,
+    driftPerSecond: 0,
+    pointEstimate: 0.5,
+    modelErrorFloor: 0.02,
+    measuredBasisErrorFloor: 0.01,
+  };
+
+  it("drops the error floor once the basis is measured rather than assumed", () => {
+    const assumed = estimateProbabilityUncertainty(input);
+    const measured = estimateProbabilityUncertainty(input, {
+      settlementBasis: { offset: 0, stdDev: 20 },
+    });
+
+    expect(assumed.usedMeasuredBasis).toBe(false);
+    expect(assumed.modelComponent).toBeCloseTo(0.02, 6);
+    expect(measured.usedMeasuredBasis).toBe(true);
+    expect(measured.modelComponent).toBeCloseTo(0.01, 6);
+    expect(measured.standardError).toBeLessThan(assumed.standardError);
+  });
+
+  it("keeps the volatility learner's signal free of the basis", () => {
+    const withoutBasis = calculateBaselineProbability(input);
+    const withBasis = calculateBaselineProbability(input, {
+      settlementBasis: { offset: 0, stdDev: 40 },
+    });
+
+    // remainingStdDev trains fitVolScale against moves measured on our own
+    // feed, so it must stay diffusion-only; only settlementStdDev absorbs it.
+    expect(withBasis.remainingStdDev).toBeCloseTo(withoutBasis.remainingStdDev, 6);
+    expect(withBasis.settlementStdDev).toBeGreaterThan(
+      withoutBasis.settlementStdDev,
+    );
+    expect(withoutBasis.settlementStdDev).toBeCloseTo(
+      withoutBasis.remainingStdDev,
+      6,
+    );
+  });
+
+  it("combines basis and diffusion in quadrature", () => {
+    const result = calculateBaselineProbability(input, {
+      settlementBasis: { offset: 0, stdDev: 60 },
+    });
+    expect(result.settlementStdDev).toBeCloseTo(
+      Math.hypot(result.remainingStdDev, 60),
+      6,
+    );
+  });
+
+  it("shifts the call when our feed trades cheap to the index", () => {
+    const neutral = calculateBaselineProbability(input);
+    const indexAbove = calculateBaselineProbability(input, {
+      settlementBasis: { offset: 80, stdDev: 10 },
+    });
+
+    expect(neutral.rawHighProbability).toBeCloseTo(0.5, 2);
+    expect(indexAbove.rawHighProbability).toBeGreaterThan(
+      neutral.rawHighProbability,
+    );
   });
 });

@@ -19,20 +19,19 @@ if [[ ! -f .env ]]; then
   log "Created .env from .env.example"
 fi
 
-if ! grep -q '^PRICE_FEED=' .env 2>/dev/null; then
-  echo "PRICE_FEED=coinbase" >> .env
-fi
+# Backfill any setting added to .env.example since this .env was created. Only
+# absent keys are appended; existing values are never overwritten, so deliberate
+# tuning survives a deploy. Values already in use are reported by check:env.
+backfilled=()
+while IFS= read -r key; do
+  if ! grep -q "^${key}=" .env 2>/dev/null; then
+    grep "^${key}=" .env.example >> .env
+    backfilled+=("$key")
+  fi
+done < <(grep -oE '^[A-Z][A-Z0-9_]*=' .env.example | tr -d '=')
 
-if ! grep -q '^API_HOST=' .env 2>/dev/null; then
-  echo "API_HOST=0.0.0.0" >> .env
-fi
-
-if ! grep -q '^PAPER_TRADING=' .env 2>/dev/null; then
-  echo "PAPER_TRADING=false" >> .env
-fi
-
-if ! grep -q '^ALWAYS_PICK_SIDE=' .env 2>/dev/null; then
-  echo "ALWAYS_PICK_SIDE=true" >> .env
+if [[ ${#backfilled[@]} -gt 0 ]]; then
+  log "Added ${#backfilled[@]} new setting(s) to .env: ${backfilled[*]}"
 fi
 
 log "Starting Postgres..."
@@ -41,6 +40,11 @@ docker compose up -d
 log "Applying database schema..."
 npm run db:push
 npm run db:migrate:sql || log "WARNING: SQL migration helper failed — schema may already be current"
+
+log "Auditing configuration..."
+if ! npm run --silent check:env; then
+  log "WARNING: the configuration above will suppress bets — fix .env and re-run"
+fi
 
 log "Building engine and dashboard..."
 npm run build

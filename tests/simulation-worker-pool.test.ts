@@ -21,6 +21,8 @@ function makeJob(overrides: Partial<PredictionJob> = {}): PredictionJob {
     shockDistribution: "normal",
     studentTDegreesOfFreedom: 5,
     observedSettlementPrices: [],
+    basisOffset: 0,
+    basisStdDev: 0,
     ...overrides,
   };
 }
