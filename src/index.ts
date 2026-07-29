@@ -23,6 +23,7 @@ import {
   estimateVolatilityPerSqrtSecond,
   type ProbabilityOutput,
 } from "./model/baseline-probability.js";
+import { estimateProbabilityUncertainty } from "./model/probability-uncertainty.js";
 import { estimateTrend } from "./model/trend-estimator.js";
 import { AdaptiveModelService } from "./model/adaptive-model.js";
 import { BASELINE_MODEL } from "./model/model-types.js";
@@ -231,28 +232,48 @@ class PredictionEngine {
     const ctx = this.collectContext();
     if (!ctx) return;
 
+    const env = getEnv();
     const adaptiveParams = this.adaptiveModel.getParams();
+    const probabilityInput = {
+      currentPrice: ctx.features.currentPrice,
+      threshold: ctx.threshold,
+      secondsRemaining: ctx.secondsRemaining,
+      volatilityPerSqrtSecond: ctx.volPerSqrtSecond,
+      driftPerSecond: ctx.trend.driftDollarsPerSecond,
+    };
+    const probabilityOptions = { calibration: adaptiveParams.calibration };
     const probability = calculateBaselineProbability(
-      {
-        currentPrice: ctx.features.currentPrice,
-        threshold: ctx.threshold,
-        secondsRemaining: ctx.secondsRemaining,
-        volatilityPerSqrtSecond: ctx.volPerSqrtSecond,
-        driftPerSecond: ctx.trend.driftDollarsPerSecond,
-      },
-      { calibration: adaptiveParams.calibration },
+      probabilityInput,
+      probabilityOptions,
     );
 
     // Prefer Monte Carlo probability when a fresh result exists for this market.
-    const mcProb =
-      this.livePrediction?.ticker === ctx.market.ticker
-        ? this.livePrediction.monteCarloHighProbability
-        : null;
+    const isSameTicker = this.livePrediction?.ticker === ctx.market.ticker;
+    const mcProb = isSameTicker
+      ? this.livePrediction!.monteCarloHighProbability
+      : null;
     const highProbability = mcProb ?? probability.adjustedHighProbability;
+
+    // Uncertainty is derived by re-pricing at perturbed volatility and drift, so
+    // the decision layer knows how much to trust the edge it is handed.
+    const uncertainty = estimateProbabilityUncertainty(
+      {
+        ...probabilityInput,
+        pointEstimate: highProbability,
+        monteCarloPathCount:
+          mcProb != null && isSameTicker
+            ? this.livePrediction!.simulationPathCount
+            : null,
+        volRelativeError: env.VOL_RELATIVE_ERROR,
+        driftUncertaintyShare: env.DRIFT_UNCERTAINTY_SHARE,
+        modelErrorFloor: env.MODEL_ERROR_FLOOR,
+      },
+      probabilityOptions,
+    );
 
     const decision = makeDecision({
       highProbability,
-      confidence: probability.confidence,
+      probabilityStdError: uncertainty.standardError,
       yesBid: ctx.kalshiState.yesBid,
       yesAsk: ctx.kalshiState.yesAsk,
       noBid: ctx.kalshiState.noBid,
@@ -274,9 +295,9 @@ class PredictionEngine {
       btcPrice: ctx.features.currentPrice,
       secondsRemaining: ctx.secondsRemaining,
       highProbability,
+      probabilityStdError: uncertainty.standardError,
       yesAsk: ctx.kalshiState.yesAsk,
       noAsk: ctx.kalshiState.noAsk,
-      confidence: probability.confidence,
       decision,
     });
 
@@ -326,7 +347,13 @@ class PredictionEngine {
         ticker: ctx.market.ticker,
         direction: recommendation.predictedDirection,
         trade: recommendation.tradeRecommendation,
+        strength: recommendation.strength,
         highProbability: highProbability.toFixed(3),
+        stdError: uncertainty.standardError.toFixed(3),
+        bestEdge: recommendation.bestEdge.toFixed(3),
+        edgeCertainty: recommendation.edgeCertainty.toFixed(2),
+        stake: recommendation.stakeFraction.toFixed(4),
+        blockers: recommendation.blockers,
         mc: mcProb?.toFixed(3) ?? null,
         secondsRemaining: ctx.secondsRemaining,
       },

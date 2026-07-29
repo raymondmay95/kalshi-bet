@@ -194,6 +194,13 @@ export class RecorderService {
             reasonCodes: {
               reasons: input.recommendation.reasons,
               warnings: input.recommendation.warnings,
+              strength: input.recommendation.strength,
+              blockers: input.recommendation.blockers,
+              directionCertainty: input.recommendation.directionCertainty,
+              edgeCertainty: input.recommendation.edgeCertainty,
+              probabilityStdError: input.recommendation.probabilityStdError,
+              marketImpliedHigh: input.recommendation.marketImpliedHigh,
+              stakeFraction: input.recommendation.stakeFraction,
             },
           })
           .returning({ id: predictions.id });

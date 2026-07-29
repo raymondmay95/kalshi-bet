@@ -1,3 +1,7 @@
+/**
+ * Kalshi taker fee: `ceil(coefficient * contracts * price * (1 - price))`,
+ * rounded up to the next cent on the *whole order*, not per contract.
+ */
 export function kalshiFee(
   price: number,
   count: number,
@@ -9,14 +13,31 @@ export function kalshiFee(
   return Math.ceil(rawFee * 100) / 100;
 }
 
+/**
+ * Order size assumed when converting the order-level fee into a per-contract
+ * cost. Pricing a single contract charges the full round-up-to-a-cent to that
+ * one contract, which overstates the fee by up to ~1c and was enough on its own
+ * to make every market look unprofitable.
+ */
+export const DEFAULT_ASSUMED_ORDER_SIZE = 20;
+
+export function feePerContract(
+  askPrice: number,
+  count = DEFAULT_ASSUMED_ORDER_SIZE,
+  coefficient = 0.07,
+): number {
+  if (count <= 0) return 0;
+  return kalshiFee(askPrice, count, coefficient) / count;
+}
+
+/** All-in per-contract cost of taking the offer: price + fee + expected slippage. */
 export function effectiveContractCost(
   askPrice: number,
-  count = 1,
+  count = DEFAULT_ASSUMED_ORDER_SIZE,
   coefficient = 0.07,
   slippage = 0.01,
 ): number {
-  const feePerContract = kalshiFee(askPrice, count, coefficient) / count;
-  return askPrice + feePerContract + slippage;
+  return askPrice + feePerContract(askPrice, count, coefficient) + slippage;
 }
 
 export interface ExpectedValueInput {
@@ -25,6 +46,7 @@ export interface ExpectedValueInput {
   noAsk: number;
   feeCoefficient?: number;
   slippage?: number;
+  assumedOrderSize?: number;
 }
 
 export interface ExpectedValueOutput {
@@ -32,6 +54,9 @@ export interface ExpectedValueOutput {
   lowEdge: number;
   effectiveYesCost: number;
   effectiveNoCost: number;
+  /** Per-contract cost of crossing the spread and paying fees, YES side. */
+  yesFrictionCost: number;
+  noFrictionCost: number;
 }
 
 export function calculateExpectedValue(
@@ -39,15 +64,17 @@ export function calculateExpectedValue(
 ): ExpectedValueOutput {
   const coefficient = input.feeCoefficient ?? 0.07;
   const slippage = input.slippage ?? 0.01;
+  const count = input.assumedOrderSize ?? DEFAULT_ASSUMED_ORDER_SIZE;
+
   const effectiveYesCost = effectiveContractCost(
     input.yesAsk,
-    1,
+    count,
     coefficient,
     slippage,
   );
   const effectiveNoCost = effectiveContractCost(
     input.noAsk,
-    1,
+    count,
     coefficient,
     slippage,
   );
@@ -57,11 +84,23 @@ export function calculateExpectedValue(
     lowEdge: 1 - input.highProbability - effectiveNoCost,
     effectiveYesCost,
     effectiveNoCost,
+    yesFrictionCost: effectiveYesCost - input.yesAsk,
+    noFrictionCost: effectiveNoCost - input.noAsk,
   };
 }
 
-export function calculateKellyFraction(edge: number, askPrice: number): number {
-  const profitRatio = 1 - askPrice;
-  if (profitRatio <= 0 || edge <= 0) return 0;
-  return Math.min(0.25 * (edge / profitRatio), 0.005);
+/**
+ * Kelly fraction for a binary contract bought at `cost` that pays $1 on a win.
+ * Optimal stake is `edge / (1 - cost)`; the caller scales it down (fractional
+ * Kelly) and caps it, because the edge itself is an estimate.
+ */
+export function calculateKellyFraction(
+  edge: number,
+  cost: number,
+  kellyMultiplier = 0.25,
+  maximumFraction = 0.02,
+): number {
+  const profitIfWin = 1 - cost;
+  if (profitIfWin <= 0 || edge <= 0) return 0;
+  return Math.min(kellyMultiplier * (edge / profitIfWin), maximumFraction);
 }

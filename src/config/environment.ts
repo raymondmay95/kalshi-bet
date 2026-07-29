@@ -16,16 +16,40 @@ const envSchema = z.object({
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace"]).default("info"),
   SNAPSHOT_INTERVAL_MS: z.coerce.number().int().positive().default(1000),
   KALSHI_POLL_INTERVAL_MS: z.coerce.number().int().positive().default(2000),
-  MINIMUM_EDGE: z.coerce.number().default(0.07),
-  MINIMUM_CONFIDENCE: z.coerce.number().default(0.7),
-  MAXIMUM_SPREAD: z.coerce.number().default(0.08),
-  MINIMUM_SECONDS_REMAINING: z.coerce.number().int().nonnegative().default(90),
+  // Edge ladder, in dollars per contract, measured after fees and slippage.
+  // A 1c edge is thin but real and is staked accordingly; the old 7c floor was
+  // unreachable because it demanded the model beat the market's own mid by more
+  // than the entire spread plus costs.
+  MINIMUM_EDGE: z.coerce.number().default(0.01),
+  MODERATE_EDGE: z.coerce.number().default(0.03),
+  STRONG_EDGE: z.coerce.number().default(0.06),
+
+  // Minimum P(edge > 0) for each grade, from the probability standard error.
+  MINIMUM_EDGE_CERTAINTY: z.coerce.number().default(0.55),
+  MODERATE_EDGE_CERTAINTY: z.coerce.number().default(0.65),
+  STRONG_EDGE_CERTAINTY: z.coerce.number().default(0.75),
+
+  MAXIMUM_SPREAD: z.coerce.number().default(0.15),
+  MINIMUM_SECONDS_REMAINING: z.coerce.number().int().nonnegative().default(20),
+  MINIMUM_LIQUIDITY: z.coerce.number().int().nonnegative().default(10),
+
+  // Position sizing
+  ASSUMED_ORDER_SIZE: z.coerce.number().int().positive().default(20),
+  KELLY_MULTIPLIER: z.coerce.number().positive().default(0.25),
+  MAXIMUM_STAKE_FRACTION: z.coerce.number().positive().default(0.02),
+  MINIMUM_STAKE_FRACTION: z.coerce.number().positive().default(0.002),
+
+  // Probability uncertainty model
+  VOL_RELATIVE_ERROR: z.coerce.number().positive().default(0.3),
+  DRIFT_UNCERTAINTY_SHARE: z.coerce.number().nonnegative().default(0.7),
+  MODEL_ERROR_FLOOR: z.coerce.number().nonnegative().default(0.02),
   BINANCE_STALE_MS: z.coerce.number().int().positive().default(3000),
   KALSHI_STALE_MS: z.coerce.number().int().positive().default(5000),
   PAPER_TRADING: z
     .string()
     .transform((v) => v.toLowerCase() === "true")
     .default("false"),
+  PAPER_BANKROLL: z.coerce.number().positive().default(1000),
   SLIPPAGE_CENTS: z.coerce.number().default(0.01),
   TAKER_FEE_COEFFICIENT: z.coerce.number().default(0.07),
   API_PORT: z.coerce.number().int().positive().default(3001),

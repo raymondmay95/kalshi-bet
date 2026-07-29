@@ -49,14 +49,316 @@ body[data-theme="active-bet"][data-signal="low"] {
   margin: 0 auto;
 }
 
+.dashboard-header {
+  margin-bottom: 16px;
+}
+
 .dashboard-title {
-  margin-top: 0;
+  margin: 0 0 4px;
   font-size: 1.75rem;
 }
 
 .dashboard-subtitle {
   color: var(--muted-color);
   font-size: 0.9rem;
+  margin: 0;
+}
+
+.muted {
+  color: var(--muted-color);
+}
+
+/* ---------- Verdict (headline decision) ---------- */
+
+.verdict-card {
+  margin-bottom: 16px;
+  border-width: 2px;
+}
+
+.verdict-card[data-strength="strong"],
+.verdict-card[data-strength="moderate"] {
+  border-color: color-mix(in srgb, var(--accent) 65%, transparent);
+}
+
+.verdict-waiting {
+  color: var(--muted-color);
+  margin: 0;
+  padding: 12px 0;
+}
+
+.verdict-primary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  align-items: start;
+  gap: 20px 28px;
+}
+
+/*
+ * The verdict card is pinned to the top of the page, so its tooltips open
+ * downward — upward bubbles would run off the top of the window.
+ */
+.verdict-card .infotip-bubble {
+  top: calc(100% + 8px);
+  bottom: auto;
+}
+
+.verdict-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted-color);
+  margin-bottom: 6px;
+}
+
+.verdict-call,
+.verdict-certainty,
+.verdict-strength {
+  display: flex;
+  flex-direction: column;
+}
+
+.verdict-certainty {
+  min-width: 190px;
+}
+
+.verdict-direction {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: -0.01em;
+}
+
+.verdict-high {
+  color: #22c55e;
+}
+
+.verdict-low {
+  color: #ef4444;
+}
+
+.verdict-percent {
+  font-size: 44px;
+  font-weight: 800;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+
+.verdict-percent-sign {
+  font-size: 22px;
+  font-weight: 600;
+  color: var(--muted-color);
+  margin-left: 2px;
+}
+
+.certainty-bar {
+  position: relative;
+  height: 8px;
+  margin-top: 10px;
+  border-radius: 999px;
+  background: var(--control-background);
+  border: 1px solid var(--card-border);
+  overflow: hidden;
+}
+
+.certainty-bar-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 300ms ease;
+}
+
+.certainty-high {
+  background: #22c55e;
+}
+
+.certainty-low {
+  background: #ef4444;
+}
+
+.certainty-bar-tick {
+  position: absolute;
+  inset-block: 0;
+  left: 50%;
+  width: 1px;
+  background: var(--control-border);
+}
+
+.strength-badge {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  padding: 8px 14px;
+  border-radius: 999px;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  border: 1px solid currentColor;
+}
+
+.strength-strong {
+  color: #052e16;
+  background: #22c55e;
+  border-color: #22c55e;
+}
+
+.strength-moderate {
+  color: #14532d;
+  background: #86efac;
+  border-color: #86efac;
+}
+
+.strength-lean {
+  color: #fbbf24;
+  background: color-mix(in srgb, #fbbf24 14%, transparent);
+}
+
+.strength-pass {
+  color: #94a3b8;
+  background: color-mix(in srgb, #94a3b8 12%, transparent);
+}
+
+.verdict-action {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--card-border);
+}
+
+.verdict-action-text {
+  margin: 0;
+  font-size: 1.05rem;
+  line-height: 1.5;
+}
+
+.verdict-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--card-border);
+}
+
+.stat-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-color);
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.tone-good {
+  color: #4ade80;
+}
+
+.tone-bad {
+  color: #f87171;
+}
+
+/* ---------- Hover tooltips ---------- */
+
+.infotip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  cursor: help;
+}
+
+.infotip-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  border: 1px solid currentColor;
+  font-size: 9px;
+  font-weight: 700;
+  font-style: italic;
+  font-family: Georgia, serif;
+  opacity: 0.55;
+  text-transform: none;
+  letter-spacing: 0;
+}
+
+.infotip:hover .infotip-icon,
+.infotip:focus-visible .infotip-icon {
+  opacity: 1;
+}
+
+.infotip:focus-visible {
+  outline: none;
+}
+
+/*
+ * Hidden with `display: none` rather than `visibility: hidden` so the bubbles
+ * do not widen the page's scrollable area while collapsed.
+ */
+.infotip-bubble {
+  display: none;
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(calc(-50% + var(--tip-shift, 0px)));
+  z-index: 50;
+  width: max-content;
+  max-width: 280px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #0b1220;
+  border: 1px solid var(--control-border);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  color: #e8ecf1;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.45;
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+  opacity: 0;
+  transition: opacity 130ms ease, display 130ms allow-discrete;
+}
+
+.infotip:hover .infotip-bubble,
+.infotip:focus-visible .infotip-bubble {
+  display: block;
+  opacity: 1;
+}
+
+@starting-style {
+  .infotip:hover .infotip-bubble,
+  .infotip:focus-visible .infotip-bubble {
+    opacity: 0;
+  }
+}
+
+/*
+ * The history table scrolls horizontally, which clips anything escaping its
+ * box, so its header tooltips open downward over the rows instead of upward.
+ */
+.history-table .infotip-bubble {
+  top: calc(100% + 8px);
+  bottom: auto;
 }
 
 .grid-top {
@@ -201,12 +503,55 @@ body[data-theme="active-bet"] .card {
 
 .metric-row {
   display: flex;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  gap: 12px;
+  margin-bottom: 10px;
 }
 
 .metric-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   color: var(--muted-color);
+}
+
+.metric-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  text-align: right;
+}
+
+.pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  border: 1px solid currentColor;
+}
+
+.pill-high {
+  color: #4ade80;
+}
+
+.pill-low {
+  color: #f87171;
+}
+
+.pill-no_bet {
+  color: #94a3b8;
+}
+
+.result-win {
+  color: #4ade80;
+  font-weight: 600;
+}
+
+.result-loss {
+  color: #f87171;
+  font-weight: 600;
 }
 
 .reasons-list {
@@ -240,8 +585,13 @@ body[data-theme="active-bet"] .card {
     padding: 12px;
   }
 
-  .signal-value {
-    font-size: 28px;
+  .verdict-primary {
+    gap: 20px 28px;
+  }
+
+  .verdict-direction,
+  .verdict-percent {
+    font-size: 36px;
   }
 
   .history-table {
@@ -271,13 +621,40 @@ body[data-theme="active-bet"] .card {
     font-size: 14px;
   }
 
-  .signal-value {
-    font-size: 24px;
+  .verdict-primary {
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  .verdict-direction,
+  .verdict-percent {
+    font-size: 32px;
+  }
+
+  .verdict-certainty {
+    min-width: 0;
+    width: 100%;
+  }
+
+  .verdict-action-text {
+    font-size: 0.95rem;
+  }
+
+  .verdict-stats {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .stat-value {
+    font-size: 18px;
+  }
+
+  .infotip-bubble {
+    max-width: 220px;
   }
 
   .metric-row {
     font-size: 14px;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
   }
 
   .history-table {

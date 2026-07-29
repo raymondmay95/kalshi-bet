@@ -35,6 +35,28 @@ export function getLiveState(): LiveState {
   return liveState;
 }
 
+interface StoredReasonCodes {
+  reasons?: string[];
+  warnings?: string[];
+  strength?: string;
+  blockers?: string[];
+  directionCertainty?: number;
+  edgeCertainty?: number;
+  stakeFraction?: number;
+}
+
+function extractReasonCodes(value: unknown): StoredReasonCodes {
+  const codes = (value ?? {}) as StoredReasonCodes;
+  return {
+    reasons: codes.reasons,
+    strength: codes.strength,
+    blockers: codes.blockers,
+    directionCertainty: codes.directionCertainty,
+    edgeCertainty: codes.edgeCertainty,
+    stakeFraction: codes.stakeFraction,
+  };
+}
+
 export function startApiServer(
   getMetrics?: () => EngineMetrics,
 ): void {
@@ -201,8 +223,7 @@ export function startApiServer(
                   ? null
                   : row.prediction.directionCorrect === 1,
               brierScore: row.prediction.brierScore,
-              reasons: (row.prediction.reasonCodes as { reasons?: string[] } | null)
-                ?.reasons,
+              ...extractReasonCodes(row.prediction.reasonCodes),
             })),
           ),
         );

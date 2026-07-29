@@ -2,8 +2,11 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createChart, type IChartApi, type ISeriesApi, type UTCTimestamp } from "lightweight-charts";
+import { STAT_INFO, type StatKey } from "./stat-definitions";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:3001";
+
+type SignalStrength = "STRONG" | "MODERATE" | "LEAN" | "PASS";
 
 interface LiveState {
   marketState: {
@@ -20,11 +23,25 @@ interface LiveState {
   recommendation: {
     recommendation: "HIGH" | "LOW" | "NO_BET";
     predictedDirection: "HIGH" | "LOW";
+    tradeRecommendation: "BET_HIGH" | "BET_LOW" | "NO_BET";
+    strength: SignalStrength;
+    directionCertainty: number;
+    edgeCertainty: number;
     highProbability: number;
     lowProbability: number;
+    probabilityStdError: number;
     highEdge: number;
     lowEdge: number;
-    confidence: number;
+    bestEdge: number;
+    bestCost: number;
+    effectiveYesCost: number;
+    effectiveNoCost: number;
+    marketImpliedHigh: number;
+    modelDisagreement: number;
+    stakeFraction: number;
+    highAsk: number;
+    lowAsk: number;
+    blockers: string[];
     reasons: string[];
     warnings: string[];
   } | null;
@@ -49,9 +66,18 @@ interface HistoryRow {
   finalResult: string | null;
   correct: boolean | null;
   secondsRemaining: number | null;
+  strength?: string;
+  directionCertainty?: number;
 }
 
 type SignalFilter = "ALL" | "ACTIONABLE" | "HIGH" | "LOW" | "NO_BET";
+
+const STRENGTH_LABEL: Record<SignalStrength, string> = {
+  STRONG: "Strong bet",
+  MODERATE: "Moderate bet",
+  LEAN: "Small lean",
+  PASS: "No bet",
+};
 
 export default function DashboardPage() {
   const chartRef = useRef<HTMLDivElement>(null);
@@ -67,7 +93,7 @@ export default function DashboardPage() {
     if (!chartRef.current) return;
     const chart = createChart(chartRef.current, {
       width: chartRef.current.clientWidth,
-      height: 320,
+      height: 300,
       layout: { background: { color: "#121826" }, textColor: "#d1d5db" },
       grid: { vertLines: { color: "#1f2937" }, horzLines: { color: "#1f2937" } },
     });
@@ -127,45 +153,36 @@ export default function DashboardPage() {
 
   const rec = live?.recommendation;
   const market = live?.marketState;
-  const priceSide: "HIGH" | "LOW" | "SAME" | null = market
-    ? Math.abs(market.btcPrice - market.threshold) < 0.01
-      ? "SAME"
-      : market.btcPrice > market.threshold
-        ? "HIGH"
-        : "LOW"
-    : null;
-  const signal = rec?.recommendation ?? null;
-  const hasActiveBet = signal === "HIGH" || signal === "LOW";
-  const signalColor =
-    signal === "HIGH" ? "#22c55e" : signal === "LOW" ? "#ef4444" : "#94a3b8";
+  const direction = rec?.predictedDirection ?? null;
+  const strength = rec?.strength ?? "PASS";
+  const isBetting = strength !== "PASS";
+  const directionColor =
+    direction === "HIGH" ? "#22c55e" : direction === "LOW" ? "#ef4444" : "#94a3b8";
 
   useEffect(() => {
-    document.body.dataset.theme = hasActiveBet ? "active-bet" : "no-bet";
-    document.body.dataset.signal = hasActiveBet ? signal.toLowerCase() : "none";
-
+    document.body.dataset.theme = isBetting ? "active-bet" : "no-bet";
+    document.body.dataset.signal =
+      isBetting && direction ? direction.toLowerCase() : "none";
     return () => {
       delete document.body.dataset.theme;
       delete document.body.dataset.signal;
     };
-  }, [hasActiveBet, signal]);
+  }, [isBetting, direction]);
 
   useEffect(() => {
-    const activeBackground = "#17122a";
-    const inactiveBackground = "#121826";
-
     chartApi.current?.applyOptions({
       layout: {
-        background: { color: hasActiveBet ? activeBackground : inactiveBackground },
-        textColor: hasActiveBet ? "#e9e5ff" : "#d1d5db",
+        background: { color: isBetting ? "#17122a" : "#121826" },
+        textColor: isBetting ? "#e9e5ff" : "#d1d5db",
       },
       grid: {
-        vertLines: { color: hasActiveBet ? "#30284d" : "#1f2937" },
-        horzLines: { color: hasActiveBet ? "#30284d" : "#1f2937" },
+        vertLines: { color: isBetting ? "#30284d" : "#1f2937" },
+        horzLines: { color: isBetting ? "#30284d" : "#1f2937" },
       },
     });
-    priceSeries.current?.applyOptions({ color: hasActiveBet ? signalColor : "#22c55e" });
-    strikeSeries.current?.applyOptions({ color: hasActiveBet ? "#a78bfa" : "#f59e0b" });
-  }, [hasActiveBet, signalColor]);
+    priceSeries.current?.applyOptions({ color: isBetting ? directionColor : "#22c55e" });
+    strikeSeries.current?.applyOptions({ color: isBetting ? "#a78bfa" : "#f59e0b" });
+  }, [isBetting, directionColor]);
 
   const filteredHistory = history.filter((row) => {
     if (signalFilter === "ALL") return true;
@@ -175,12 +192,34 @@ export default function DashboardPage() {
     return row.recommendation === signalFilter;
   });
 
+  const spread = market
+    ? Math.max(
+        market.kalshiYesAsk - market.kalshiYesBid,
+        market.kalshiNoAsk - market.kalshiNoBid,
+      )
+    : null;
+
   return (
     <main className="dashboard-main">
-      <h1 className="dashboard-title">Kalshi BTC 15m Prediction Engine</h1>
-      <p className="dashboard-subtitle">
-        Advisory signals only — records every guess and outcome for model refinement
-      </p>
+      <header className="dashboard-header">
+        <h1 className="dashboard-title">Kalshi BTC 15m Prediction Engine</h1>
+        <p className="dashboard-subtitle">
+          Advisory signals only — every call and outcome is recorded for model refinement
+        </p>
+      </header>
+
+      {rec && direction ? (
+        <VerdictCard
+          direction={direction}
+          strength={strength}
+          rec={rec}
+          market={market ?? null}
+        />
+      ) : (
+        <section className="card verdict-card">
+          <p className="verdict-waiting">Waiting for the engine to price a market…</p>
+        </section>
+      )}
 
       <div className="grid-top">
         <section className="card">
@@ -189,31 +228,30 @@ export default function DashboardPage() {
         </section>
 
         <section className="card">
-          <div className="card-heading-row">
-            <h2 className="card-heading">Signal</h2>
-            {priceSide ? (
-              <span className={`status-badge status-${priceSide.toLowerCase()}`}>
-                <DirectionArrow side={priceSide} size={12} />
-                {priceSide}
-              </span>
-            ) : null}
-          </div>
+          <h2 className="card-heading">Why</h2>
           {rec ? (
             <>
-              <div className="signal-value" style={{ color: signalColor }}>
-                {signal === "HIGH" || signal === "LOW" ? (
-                  <>
-                    <DirectionArrow side={signal} size={28} />
-                    {signal}
-                  </>
-                ) : (
-                  signal
-                )}
-              </div>
-              <Metric label="P(HIGH)" value={`${(rec.highProbability * 100).toFixed(1)}%`} />
-              <Metric label="HIGH edge" value={rec.highEdge.toFixed(3)} />
-              <Metric label="LOW edge" value={rec.lowEdge.toFixed(3)} />
-              <Metric label="Confidence" value={rec.confidence.toFixed(2)} />
+              <Metric
+                label="Model says HIGH"
+                info="modelProbability"
+                value={`${(rec.highProbability * 100).toFixed(1)}%`}
+              />
+              <Metric
+                label="Market says HIGH"
+                info="marketProbability"
+                value={`${(rec.marketImpliedHigh * 100).toFixed(1)}%`}
+              />
+              <Metric
+                label="Disagreement"
+                info="disagreement"
+                value={`${rec.modelDisagreement >= 0 ? "+" : ""}${(rec.modelDisagreement * 100).toFixed(1)} pts`}
+                tone={Math.abs(rec.modelDisagreement) >= 0.04 ? "good" : "neutral"}
+              />
+              <Metric
+                label="Estimate precision"
+                info="standardError"
+                value={`±${(rec.probabilityStdError * 100).toFixed(1)} pts`}
+              />
               <ul className="reasons-list">
                 {rec.reasons.map((reason) => (
                   <li key={reason}>{reason}</li>
@@ -226,7 +264,7 @@ export default function DashboardPage() {
               ))}
             </>
           ) : (
-            <p>Waiting for engine...</p>
+            <p className="muted">Waiting for engine…</p>
           )}
         </section>
       </div>
@@ -236,38 +274,67 @@ export default function DashboardPage() {
           <h2 className="card-heading">Market State</h2>
           {market ? (
             <>
-              <Metric label="Ticker" value={market.kalshiTicker} />
-              <Metric label="BTC" value={`$${market.btcPrice.toFixed(2)}`} />
-              <Metric label="Strike" value={`$${market.threshold.toFixed(2)}`} />
-              <Metric label="Distance" value={`${market.distanceToThresholdBps.toFixed(1)} bps`} />
-              <Metric label="Time left" value={`${market.secondsRemaining}s`} />
-              <Metric label="YES bid/ask" value={`${market.kalshiYesBid.toFixed(2)} / ${market.kalshiYesAsk.toFixed(2)}`} />
-              <Metric label="NO bid/ask" value={`${market.kalshiNoBid.toFixed(2)} / ${market.kalshiNoAsk.toFixed(2)}`} />
+              <Metric label="Ticker" info="ticker" value={market.kalshiTicker} />
+              <Metric label="BTC price" info="btcPrice" value={`$${market.btcPrice.toFixed(2)}`} />
+              <Metric label="Strike" info="strike" value={`$${market.threshold.toFixed(2)}`} />
+              <Metric
+                label="Distance to strike"
+                info="distance"
+                value={`${market.distanceToThresholdBps >= 0 ? "+" : ""}${market.distanceToThresholdBps.toFixed(1)} bps`}
+              />
+              <Metric label="Time left" info="timeLeft" value={formatClock(market.secondsRemaining)} />
+              <Metric
+                label="YES bid / ask"
+                info="quotes"
+                value={`${toCents(market.kalshiYesBid)} / ${toCents(market.kalshiYesAsk)}`}
+              />
+              <Metric
+                label="NO bid / ask"
+                info="quotes"
+                value={`${toCents(market.kalshiNoBid)} / ${toCents(market.kalshiNoAsk)}`}
+              />
+              {spread != null ? (
+                <Metric label="Spread" info="spread" value={toCents(spread)} />
+              ) : null}
             </>
           ) : (
-            <p>No active market</p>
+            <p className="muted">No active market</p>
           )}
         </section>
 
         <section className="card">
           <h2 className="card-heading">Track Record</h2>
-          <Metric label="Predictions logged" value={String(performance?.totalPredictions ?? 0)} />
-          <Metric label="Evaluated" value={String(performance?.evaluatedPredictions ?? 0)} />
-          <Metric label="HIGH/LOW signals" value={String(performance?.actionableSignals ?? 0)} />
           <Metric
-            label="Signal accuracy"
+            label="Predictions logged"
+            info="predictionsLogged"
+            value={String(performance?.totalPredictions ?? 0)}
+          />
+          <Metric
+            label="Settled"
+            info="evaluated"
+            value={String(performance?.evaluatedPredictions ?? 0)}
+          />
+          <Metric
+            label="Bets recommended"
+            info="actionableSignals"
+            value={String(performance?.actionableSignals ?? 0)}
+          />
+          <Metric
+            label="Bet accuracy"
+            info="signalAccuracy"
             value={
               performance?.accuracy != null
                 ? `${(performance.accuracy * 100).toFixed(1)}%`
-                : "N/A"
+                : "Not enough data"
             }
           />
           <Metric
-            label="Avg Brier score"
+            label="Brier score"
+            info="brier"
             value={
               performance?.averageBrier != null
                 ? performance.averageBrier.toFixed(4)
-                : "N/A"
+                : "Not enough data"
             }
           />
         </section>
@@ -284,7 +351,7 @@ export default function DashboardPage() {
                 setSignalFilter(event.target.value as SignalFilter)
               }
             >
-              <option value="ACTIONABLE">HIGH / LOW</option>
+              <option value="ACTIONABLE">Bets only</option>
               <option value="ALL">All</option>
               <option value="HIGH">HIGH</option>
               <option value="LOW">LOW</option>
@@ -297,11 +364,19 @@ export default function DashboardPage() {
             <thead>
               <tr>
                 <th>Time</th>
-                <th>Signal</th>
-                <th>P(HIGH)</th>
-                <th>Conf</th>
-                <th>Outcome</th>
-                <th>Correct?</th>
+                <th>
+                  Signal <InfoTip info="historySignal" />
+                </th>
+                <th>
+                  Certainty <InfoTip info="certainty" />
+                </th>
+                <th>
+                  Edge conf. <InfoTip info="edgeCertainty" />
+                </th>
+                <th>
+                  Outcome <InfoTip info="outcome" />
+                </th>
+                <th>Result</th>
               </tr>
             </thead>
             <tbody>
@@ -315,18 +390,30 @@ export default function DashboardPage() {
                 filteredHistory.slice(0, 20).map((row) => (
                   <tr key={row.id}>
                     <td>{new Date(row.timestamp).toLocaleTimeString()}</td>
-                    <td>{row.recommendation}</td>
-                    <td>{(row.predictedHigh * 100).toFixed(1)}%</td>
-                    <td>{row.confidence.toFixed(2)}</td>
+                    <td>
+                      <span className={`pill pill-${row.recommendation.toLowerCase()}`}>
+                        {row.recommendation === "NO_BET" ? "PASS" : row.recommendation}
+                      </span>
+                    </td>
+                    <td>
+                      {(
+                        (row.directionCertainty ??
+                          Math.max(row.predictedHigh, 1 - row.predictedHigh)) * 100
+                      ).toFixed(0)}
+                      %
+                    </td>
+                    <td>{(row.confidence * 100).toFixed(0)}%</td>
                     <td>{formatOutcome(row.finalResult)}</td>
                     <td>
-                      {row.correct == null
-                        ? row.recommendation === "NO_BET"
-                          ? "—"
-                          : "pending"
-                        : row.correct
-                          ? "yes"
-                          : "no"}
+                      {row.correct == null ? (
+                        <span className="muted">
+                          {row.recommendation === "NO_BET" ? "—" : "pending"}
+                        </span>
+                      ) : (
+                        <span className={row.correct ? "result-win" : "result-loss"}>
+                          {row.correct ? "won" : "lost"}
+                        </span>
+                      )}
                     </td>
                   </tr>
                 ))
@@ -339,13 +426,231 @@ export default function DashboardPage() {
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function VerdictCard({
+  direction,
+  strength,
+  rec,
+  market,
+}: {
+  direction: "HIGH" | "LOW";
+  strength: SignalStrength;
+  rec: NonNullable<LiveState["recommendation"]>;
+  market: LiveState["marketState"];
+}) {
+  const betSide = rec.tradeRecommendation === "BET_LOW" ? "LOW" : "HIGH";
+  const isBetting = strength !== "PASS";
+
   return (
-    <div className="metric-row">
-      <span className="metric-label">{label}</span>
-      <span>{value}</span>
+    <section className="card verdict-card" data-strength={strength.toLowerCase()}>
+      <div className="verdict-primary">
+        <div className="verdict-call">
+          <span className="verdict-label">
+            Call <InfoTip info="direction" />
+          </span>
+          <span className={`verdict-direction verdict-${direction.toLowerCase()}`}>
+            <DirectionArrow side={direction} size={36} />
+            {direction}
+          </span>
+        </div>
+
+        <div className="verdict-certainty">
+          <span className="verdict-label">
+            Certainty <InfoTip info="certainty" />
+          </span>
+          <span className="verdict-percent">
+            {(rec.directionCertainty * 100).toFixed(0)}
+            <span className="verdict-percent-sign">%</span>
+          </span>
+          <CertaintyBar value={rec.directionCertainty} direction={direction} />
+        </div>
+
+        <div className="verdict-strength">
+          <span className="verdict-label">
+            Conviction <InfoTip info="strength" />
+          </span>
+          <span className={`strength-badge strength-${strength.toLowerCase()}`}>
+            {STRENGTH_LABEL[strength]}
+          </span>
+        </div>
+      </div>
+
+      <div className="verdict-action">
+        <span className="verdict-label">
+          What to do <InfoTip info="action" />
+        </span>
+        <p className="verdict-action-text">
+          {isBetting
+            ? `Buy ${betSide === "HIGH" ? "YES" : "NO"} at ${toCents(betSide === "HIGH" ? rec.highAsk : rec.lowAsk)} — all-in ${toCents(rec.bestCost)} per contract, staking ${(rec.stakeFraction * 100).toFixed(2)}% of bankroll.`
+            : rec.blockers.length > 0
+              ? `Stand aside — ${rec.warnings[0] ?? "cannot execute right now"}. Best guess is still ${direction} at ${(rec.directionCertainty * 100).toFixed(0)}% certainty.`
+              : `Stand aside — the market is priced fairly (best edge ${formatEdge(rec.bestEdge)}). Best guess is still ${direction} at ${(rec.directionCertainty * 100).toFixed(0)}% certainty.`}
+        </p>
+      </div>
+
+      <div className="verdict-stats">
+        <Stat
+          label="Edge"
+          info="edge"
+          value={formatEdge(rec.bestEdge)}
+          tone={rec.bestEdge > 0 ? "good" : "bad"}
+        />
+        <Stat
+          label="Edge confidence"
+          info="edgeCertainty"
+          value={`${(rec.edgeCertainty * 100).toFixed(0)}%`}
+          tone={rec.edgeCertainty >= 0.65 ? "good" : rec.edgeCertainty >= 0.55 ? "neutral" : "bad"}
+        />
+        <Stat
+          label="All-in cost"
+          info="effectiveCost"
+          value={toCents(rec.bestCost)}
+        />
+        <Stat
+          label="Stake"
+          info="stake"
+          value={isBetting ? `${(rec.stakeFraction * 100).toFixed(2)}%` : "—"}
+        />
+        <Stat
+          label="Time left"
+          info="timeLeft"
+          value={market ? formatClock(market.secondsRemaining) : "—"}
+        />
+      </div>
+    </section>
+  );
+}
+
+function CertaintyBar({
+  value,
+  direction,
+}: {
+  value: number;
+  direction: "HIGH" | "LOW";
+}) {
+  // The bar starts at the 50% coin-flip point, so it shows information gained
+  // over a guess rather than an impressive-looking bar for a toss-up.
+  const filled = Math.max(0, Math.min(1, (value - 0.5) * 2));
+  return (
+    <div
+      className="certainty-bar"
+      role="img"
+      aria-label={`${(value * 100).toFixed(0)} percent certainty on ${direction}`}
+    >
+      <div
+        className={`certainty-bar-fill certainty-${direction.toLowerCase()}`}
+        style={{ width: `${filled * 100}%` }}
+      />
+      <span className="certainty-bar-tick" />
     </div>
   );
+}
+
+function InfoTip({ info }: { info: StatKey }) {
+  const ref = useRef<HTMLSpanElement>(null);
+
+  // Labels sit at the edges of cards, where a centred bubble would hang off
+  // screen, so nudge it back inside the viewport once it is laid out.
+  const clampIntoView = () => {
+    const bubble = ref.current?.querySelector<HTMLElement>(".infotip-bubble");
+    if (!bubble) return;
+
+    bubble.style.setProperty("--tip-shift", "0px");
+
+    // The bubble is display:none until the hover styles land, so force a
+    // hidden layout pass when it has no box yet rather than measuring zeroes.
+    const needsLayout = bubble.offsetWidth === 0;
+    if (needsLayout) {
+      bubble.style.display = "block";
+      bubble.style.visibility = "hidden";
+    }
+    const rect = bubble.getBoundingClientRect();
+    if (needsLayout) {
+      bubble.style.display = "";
+      bubble.style.visibility = "";
+    }
+
+    const margin = 8;
+    const overflowLeft = margin - rect.left;
+    const overflowRight = rect.right - (window.innerWidth - margin);
+    const shift =
+      overflowLeft > 0 ? overflowLeft : overflowRight > 0 ? -overflowRight : 0;
+    bubble.style.setProperty("--tip-shift", `${Math.round(shift)}px`);
+  };
+
+  return (
+    <span
+      ref={ref}
+      className="infotip"
+      tabIndex={0}
+      role="note"
+      aria-label={STAT_INFO[info]}
+      onMouseEnter={clampIntoView}
+      onFocus={clampIntoView}
+    >
+      <span aria-hidden="true" className="infotip-icon">
+        i
+      </span>
+      <span className="infotip-bubble">{STAT_INFO[info]}</span>
+    </span>
+  );
+}
+
+function Metric({
+  label,
+  value,
+  info,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  info?: StatKey;
+  tone?: "good" | "bad" | "neutral";
+}) {
+  return (
+    <div className="metric-row">
+      <span className="metric-label">
+        {label}
+        {info ? <InfoTip info={info} /> : null}
+      </span>
+      <span className={`metric-value tone-${tone}`}>{value}</span>
+    </div>
+  );
+}
+
+function Stat({
+  label,
+  value,
+  info,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  info: StatKey;
+  tone?: "good" | "bad" | "neutral";
+}) {
+  return (
+    <div className="stat-tile">
+      <span className="stat-label">
+        {label}
+        <InfoTip info={info} />
+      </span>
+      <span className={`stat-value tone-${tone}`}>{value}</span>
+    </div>
+  );
+}
+
+function toCents(price: number): string {
+  return `${(price * 100).toFixed(1)}\u00A2`;
+}
+
+function formatEdge(edge: number): string {
+  return `${edge >= 0 ? "+" : "\u2212"}${Math.abs(edge * 100).toFixed(1)}\u00A2`;
+}
+
+function formatClock(seconds: number): string {
+  if (seconds < 0) return "0:00";
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
 }
 
 function formatOutcome(finalResult: string | null): string {
